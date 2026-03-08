@@ -43,6 +43,8 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="KnowCamp API", version="2.0.0")
 
+ADMIN_KEY = os.getenv("ADMIN_KEY")
+API_KEY = os.getenv("API_KEY")
 
 app.add_middleware(
     CORSMiddleware,
