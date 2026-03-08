@@ -1,0 +1,39 @@
+# /docker-compose.yml
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: knowcamp
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app  # <--- THIS IS THE MAGIC! It links your VS Code to the container for live editing.
+    environment:
+      # Tell FastAPI how to talk to the new Docker database
+      - DATABASE_URL=postgresql://neondb_owner:npg_8XRUb5TyiBZc@ep-spring-poetry-ai4vyvx0-pooler.c-4.us-east-1.aws.neon.tech/knowcamp_db?sslmode=require&channel_binding=require
+    depends_on:
+      - db
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app # <--- Live editing for React!
+      - /app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

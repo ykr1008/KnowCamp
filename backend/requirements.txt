@@ -1,0 +1,32 @@
+fastapi==0.104.1
+uvicorn==0.24.0.post1
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+python-dotenv==1.0.0
+passlib[bcrypt]
+PyJWT
+python-multipart
+bcrypt==4.0.1
+pydantic==2.5.2
+pydantic-settings==2.1.0
+
+# --- AI & LangChain ---
+groq
+langchain
+langchain-community
+langchain-text-splitters
+langchain-huggingface
+sentence-transformers
+chromadb
+
+# --- Document Parsing Engines ---
+pypdf
+pdfplumber
+python-docx
+docx2txt
+pandas
+openpyxl
+Pillow
+pytesseract
+opencv-python-headless
+numpy

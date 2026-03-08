@@ -1,0 +1,19 @@
+# Security (NEVER UPLOAD THESE)
+.env
+__pycache__/
+*.pyc
+
+# Virtual Environments
+venv/
+env/
+
+# Frontend Dependencies
+node_modules/
+build/
+dist/
+
+# Databases & Uploads
+chroma_db/
+uploads/
+*.sqlite3
+*.db
