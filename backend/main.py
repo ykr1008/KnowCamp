@@ -439,7 +439,7 @@ def chat(
 
         # 1. Establish the session
         if not session_id:
-            new_session = models.ChatSession(user_id=user.id, title=question[:30])
+            new_session = models.ChatSession(user_id=user.id, subject_id=subject_id, title=question[:30])
             db.add(new_session)
             db.commit()
             db.refresh(new_session)
@@ -921,3 +921,53 @@ def remove_faculty_from_class(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@app.delete("/subjects/{subject_id}")
+def delete_subject(
+    subject_id: int, 
+    token: str = Depends(oauth2_scheme), 
+    db: Session = Depends(get_db)
+):
+    # 1. Authenticate
+    try:
+        import jwt
+        payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
+        username = payload.get("sub")
+        current_user = db.query(models.User).filter(models.User.username == username).first()
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    if not current_user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # 2. Find the Class
+    subject = db.query(models.Subject).filter(models.Subject.id == subject_id).first()
+    if not subject:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    # 3. RBAC Check: Must be an Admin OR the Faculty who created it
+    if current_user.role != "admin" and subject.faculty_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Access Denied. Only Admins or the class creator can delete this class."
+        )
+
+    # 4. Wipe Vector Data (Preventing "Ghost Data" in the AI)
+    try:
+        from processor import CHROMA_PATH, embeddings
+        from langchain_community.vectorstores import Chroma
+        vector_db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
+        # Delete all document chunks tagged with this specific subject_id
+        vector_db._collection.delete(where={"subject_id": str(subject_id)})
+    except Exception as e:
+        print(f"Warning: Failed to clean ChromaDB vectors: {e}")
+
+    # 5. Delete from PostgreSQL (Cascades will handle the rest!)
+    try:
+        db.delete(subject)
+        db.commit()
+        return {"message": "Classroom and all associated data permanently deleted."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error during deletion: {str(e)}")

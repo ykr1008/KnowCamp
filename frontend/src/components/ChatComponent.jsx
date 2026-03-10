@@ -82,6 +82,22 @@ const ChatComponent = ({ onLogout }) => {
     }
   };
 
+  // --- DELETE CLASSROOM ---
+  const handleDeleteClass = async () => {
+    if (!window.confirm("🚨 WARNING: Are you sure you want to delete this class? This will PERMANENTLY wipe all documents, chat history, and enrollments. This cannot be undone.")) return;
+    
+    try {
+      const token = localStorage.getItem('token');
+      await axios.delete(`http://127.0.0.1:8000/subjects/${currentSubject.id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      alert("Class deleted successfully.");
+      goDashboard(); // Kick them back to the dashboard after deletion
+    } catch (error) {
+      alert(error.response?.data?.detail || "Failed to delete class.");
+    }
+  };
+
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); };
@@ -737,14 +753,33 @@ const ChatComponent = ({ onLogout }) => {
             </h2>
           </div>
 
-          {/* RIGHT SIDE: The Manage Class Button (Only visible in Classrooms for Admin/Faculty) */}
-          {activeView === 'classroom' && (userRole === 'admin' || userRole === 'faculty') && (
-            <button 
-              onClick={() => fetchClassStudents(currentSubject.id)}
-              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', backgroundColor: '#e8f0fe', color: '#1967d2', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}
-            >
-              <Users size={18} /> Manage Class
-            </button>
+          {/* RIGHT SIDE: Manage & Delete Buttons */}
+          {activeView === 'classroom' && (
+            <div style={{ display: 'flex', gap: '10px' }}>
+              
+              {/* Existing Manage Button */}
+              {(userRole === 'admin' || userRole === 'faculty') && (
+                <button 
+                  onClick={() => fetchClassStudents(currentSubject.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', backgroundColor: '#e8f0fe', color: '#1967d2', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}
+                >
+                  <Users size={18} /> Manage Class
+                </button>
+              )}
+
+              {/* NEW DELETE BUTTON (Strict RBAC applied) */}
+              {(userRole === 'admin' || (userRole === 'faculty' && currentSubject?.faculty_id === parseInt(localStorage.getItem('user_id') || 0))) && (
+                <button 
+                  onClick={handleDeleteClass}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', backgroundColor: '#fce8e6', color: '#d93025', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}
+                  onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#fad2cf'} 
+                  onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#fce8e6'}
+                >
+                  <Trash2 size={18} /> Delete Class
+                </button>
+              )}
+
+            </div>
           )}
         </div>
         

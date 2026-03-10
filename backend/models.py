@@ -43,9 +43,9 @@ class Subject(Base):
     faculty_id = Column(Integer, ForeignKey("users.id"))
     faculty = relationship("User", back_populates="subjects_taught")
     
-    enrollments = relationship("Enrollment", back_populates="subject")
-    documents = relationship("Document", back_populates="subject")
-    chat_sessions = relationship("ChatSession", back_populates="subject") # <-- THIS IS THE CRUCIAL LINE
+    enrollments = relationship("Enrollment", back_populates="subject", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="subject", cascade="all, delete-orphan")
+    chat_sessions = relationship("ChatSession", back_populates="subject", cascade="all, delete-orphan") # <-- THIS IS THE CRUCIAL LINE
 
 class Enrollment(Base):
     """Linking table: Connects a Student to a Subject using the invite code."""
