@@ -176,10 +176,8 @@ async def upload_document(
     db.add(new_doc)
     db.commit()
 
-    # 2. Read the file content safely
+    # 2. Read the file content safely and save it
     content = await file.read()
-
-    # --- THE MISSING LINK: SAVE THE PHYSICAL FILE TO THE FOLDER! ---
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as f:
         f.write(content)
@@ -188,95 +186,42 @@ async def upload_document(
     filename = file.filename.lower()
     
     try:
-        # --- PDF FILES (THE LAYOUT PRESERVER) ---
-        if filename.endswith(".pdf"):
-            import pdfplumber
-            try:
-                # PLAN A: Extract text while preserving the exact visual layout!
-                with pdfplumber.open(file_path) as pdf:
-                    for page in pdf.pages:
-                        # layout=True forces the computer to respect column spacing
-                        extracted_text = page.extract_text(layout=True)
-                        if extracted_text:
-                            text += extracted_text + "\n\n"
-            except Exception as e:
-                print(f"pdfplumber layout extraction failed: {e}")
-            
-            # PLAN C: THE NUCLEAR OPTION (OpenCV + OCR)
-            if not text.strip():
-                print("PDF text is blank. Deploying OpenCV + Tesseract OCR...")
-                import pytesseract
-                import pdfplumber
-                import cv2
-                import numpy as np
-                
-                try:
-                    with pdfplumber.open(file_path) as pdf:
-                        for page in pdf.pages:
-                            # 1. Get the raw image
-                            pil_image = page.to_image(resolution=300).original
-                            
-                            # 2. Convert to OpenCV format
-                            img_cv = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-                            
-                            # 3. Wash the Image (Grayscale)
-                            gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-                            
-                            # 4. Remove Watermarks (Binarization/Thresholding)
-                            # This turns anything darker than a certain gray into pure black, and the rest to pure white.
-                            _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-                            
-                            # 5. Scan the clean image (psm 6 tells it to read it as a uniform block of text/table)
-                            custom_config = r'--oem 3 --psm 6'
-                            clean_text = pytesseract.image_to_string(thresh, config=custom_config)
-                            
-                            text += clean_text + "\n\n"
-                except Exception as e:
-                    print(f"OpenCV/OCR failed: {e}")
-                    
-        # --- MICROSOFT WORD FILES ---
-        elif filename.endswith(".docx"):
-            doc = docx.Document(io.BytesIO(content))
-            text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-            
-        # --- EXCEL SPREADSHEETS ---
-        elif filename.endswith((".xlsx", ".xls")):
-            # pandas reads the Excel file in memory and converts it to a clean string table
-            df = pd.read_excel(io.BytesIO(content))
-            text = df.to_string(index=False)
-
-        # --- IMAGES (OCR) ---
-        elif filename.endswith((".png", ".jpg", ".jpeg")):
-            img = Image.open(io.BytesIO(content))
-            # Tesseract scans the image pixels and extracts the text
-            text = pytesseract.image_to_string(img)
-            
-        # --- PLAIN TEXT & CSV ---
-        elif filename.endswith((".txt", ".md", ".csv")):
-            text = content.decode("utf-8")
-            
-        else:
-            raise ValueError(f"Unsupported file extension: {filename}")
+        # --- THE LLAMAPARSE UPGRADE (Built for Research Papers) ---
+        print(f"Deploying LlamaParse Vision AI on {file.filename}...")
+        
+        from llama_parse import LlamaParse
+        
+        # Initialize the advanced layout-aware parser
+        parser = LlamaParse(
+            api_key=os.getenv("LLAMA_CLOUD_API_KEY"), 
+            result_type="markdown", # This forces it to format tables and headers perfectly!
+            verbose=True,
+            language="en"
+        )
+        
+        # Parse the saved file directly
+        parsed_docs = parser.load_data(file_path)
+        
+        # Combine the parsed pages into one beautifully formatted Markdown string
+        text = "\n\n".join([doc.text for doc in parsed_docs])
+        
+        print(f"Successfully extracted {file.filename} with layout preserved!")
             
     except Exception as e:
         db.delete(new_doc) # Rollback the database if reading fails
         db.commit()
-        raise HTTPException(status_code=400, detail=f"Failed to read file format: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to parse document: {str(e)}")
 
     # 3. Split and tag the text
-
-    # --- ADD THIS DEBUG LINE ---
     print("\n" + "="*50)
     print("DEBUG: THIS IS WHAT THE AI SEES:")
     print(text)
     print("="*50 + "\n")
-    # ---------------------------
 
-    # --- THE SAFETY NET (ADD THIS) ---
     if not text.strip():
         db.delete(new_doc)
         db.commit()
-        raise HTTPException(status_code=400, detail="Could not read any text from this file. It might be an image-only PDF.")
+        raise HTTPException(status_code=400, detail="Could not read any text from this file.")
 
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=800)
@@ -480,8 +425,7 @@ def chat(
         docs = []
         for doc, score in raw_results:
             print(f"DEBUG - File: {os.path.basename(doc.metadata.get('source', 'Unknown'))}, Score: {score}") 
-            if score < 1.8:  # Keep it relaxed, Groq will filter the garbage!
-                docs.append(doc)
+            docs.append(doc)
 
         # If database is empty or nothing passes
         if not docs:

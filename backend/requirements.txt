@@ -1,14 +1,17 @@
-fastapi==0.104.1
-uvicorn==0.24.0.post1
+# --- Core API & Server ---
+fastapi>=0.112.0
+uvicorn>=0.29.0
+python-multipart
+python-dotenv==1.0.0
+
+# --- Database & Security ---
 sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
-python-dotenv==1.0.0
 passlib[bcrypt]
 PyJWT
-python-multipart
 bcrypt==4.0.1
-pydantic==2.5.2
-pydantic-settings==2.1.0
+pydantic>=2.8.0
+pydantic-settings
 
 # --- AI & LangChain ---
 groq
@@ -30,3 +33,4 @@ Pillow
 pytesseract
 opencv-python-headless
 numpy
+llama-parse
