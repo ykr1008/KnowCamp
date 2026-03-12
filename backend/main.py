@@ -76,6 +76,7 @@ app.mount("/files", StaticFiles(directory=UPLOAD_DIR), name="files")
 class UserCreate(BaseModel):
     username: str
     password: str
+    institution_name: str
     secret_key: Optional[str] = None
 
 class WhitelistRequest(BaseModel):
@@ -103,30 +104,56 @@ def read_root():
 # ==========================================
 # AUTHENTICATION & SECURITY
 # ==========================================
+# ==========================================
+# AUTHENTICATION & SECURITY (SaaS Upgraded)
+# ==========================================
 @app.post("/create_user/")
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
+    # 1. Check if user already exists globally
     existing_user = db.query(models.User).filter(models.User.username == user.username).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already registered!")
     
+    # 2. SAAS TENANT PROVISIONING
+    institution = db.query(models.Institution).filter(models.Institution.name == user.institution_name).first()
     assigned_role = "student"
-    
+
     if user.secret_key == ADMIN_KEY:
         assigned_role = "admin"
+        # If the admin is registering a new college, create the Institution workspace!
+        if not institution:
+            institution = models.Institution(name=user.institution_name)
+            db.add(institution)
+            db.commit()
+            db.refresh(institution)
     else:
-        approved = db.query(models.ApprovedEmail).filter(models.ApprovedEmail.email == user.username).first()
+        # If a student/faculty is registering, the college MUST exist already
+        if not institution:
+            raise HTTPException(status_code=404, detail="Institution not found. Please ask your admin to register it first.")
+        
+        # Check the whitelist ONLY for this specific institution
+        approved = db.query(models.ApprovedEmail).filter(
+            models.ApprovedEmail.email == user.username,
+            models.ApprovedEmail.institution_id == institution.id
+        ).first()
+        
         if not approved:
-            raise HTTPException(status_code=403, detail="Your email is not on the approved list. Please contact the administrator.")
+            raise HTTPException(status_code=403, detail="Your email is not on this institution's approved list.")
         assigned_role = approved.assigned_role 
 
+    # 3. Create the user and lock them to the Tenant
     hashed_password = security.get_password_hash(user.password)
-    new_user = models.User(username=user.username, password_hash=hashed_password, role=assigned_role)
+    new_user = models.User(
+        username=user.username, 
+        password_hash=hashed_password, 
+        role=assigned_role,
+        institution_id=institution.id # <-- LOCKED TO TENANT
+    )
     
     db.add(new_user)
     db.commit()
-    db.refresh(new_user)
     
-    return {"message": f"User {user.username} created successfully as a {assigned_role}!"}
+    return {"message": f"User {user.username} created successfully in {institution.name} as a {assigned_role}!"}
 
 @app.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -134,13 +161,17 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     if not user or not security.verify_password(form_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     
-    access_token = security.create_access_token(data={"sub": user.username, "role": user.role})
+    # INJECT THE TENANT ID INTO THE JWT TOKEN
+    access_token = security.create_access_token(
+        data={"sub": user.username, "role": user.role, "inst_id": user.institution_id}
+    )
     
     return {
         "access_token": access_token, 
         "token_type": "bearer",
         "role": user.role,
-        "user_id": user.id
+        "user_id": user.id,
+        "institution_id": user.institution_id # Let the frontend know where they are
     }
 
 # ==========================================
@@ -171,7 +202,8 @@ async def upload_document(
     new_doc = models.Document(
         filename=file.filename, 
         uploaded_by=user.username,
-        subject_id=subject_id 
+        subject_id=subject_id,
+        institution_id=user.institution_id # <-- LOCKED TO TENANT
     )
     db.add(new_doc)
     db.commit()
@@ -228,7 +260,13 @@ async def upload_document(
     chunks = text_splitter.split_text(text)
     
     metadata_tag = "global" if subject_id is None else str(subject_id)
-    metadatas = [{"source": file.filename, "subject_id": metadata_tag} for _ in chunks]
+    metadatas = [
+        {
+            "source": file.filename, 
+            "subject_id": metadata_tag,
+            "inst_id": str(user.institution_id) # <-- CRITICAL ISOLATION TAG
+        } for _ in chunks
+    ]
     
     # 4. Save to Vector Database
     from processor import CHROMA_PATH, embeddings
@@ -405,20 +443,18 @@ def chat(
         
         target_subject = str(subject_id) if subject_id else "global"
         
-        # Build the exact filter ChromaDB demands
+        # Build the exact filter ChromaDB demands (Locked to the Tenant)
+        search_filter = {
+            "$and": [
+                {"inst_id": str(user.institution_id)}, # <-- AI CAN ONLY SEE THIS COLLEGE
+                {"subject_id": target_subject}
+            ]
+        }
+        
         if filename:
-            search_filter = {
-                "$and": [
-                    {"subject_id": target_subject},
-                    {"source": filename}
-                ]
-            }
-        else:
-            search_filter = {
-                "subject_id": target_subject
-            }
+            search_filter["$and"].append({"source": filename})
 
-        # 👉 THIS IS THE ONLY SEARCH COMMAND WE NEED NOW
+        # Search the database securely
         raw_results = vector_db.similarity_search_with_score(search_query, k=15, filter=search_filter)
 
         # Quality Control Filter
@@ -461,35 +497,42 @@ def chat(
         
         context = "\n\n".join(context_parts)
         
-        # --- THE DYNAMIC BRAIN SWAP ---
+        # --- THE DYNAMIC BRAIN SWAP (V2: Million-Dollar SaaS Edition) ---
+        
+        # This block defines the "Persona" rules that apply to BOTH modes
+        personality_rules = (
+            "PERSONALITY & STYLE GUIDE:\n"
+            "1. SENTIMENT AWARENESS: Detect the user's emotion. If they are stressed/sad (e.g., about a claim), be extra empathetic and calming. If they are happy/excited, be encouraging. If they are professional/neutral, be concise and efficient.\n"
+            "2. VISUAL HIERARCHY: Use Markdown heavily. Use '###' for section headers and '---' for dividers.\n"
+            "3. EMOJIS: Use emojis professionally to categorize information (e.g., 🏥 for hospitals, 💰 for money, ⚠️ for warnings, ✅ for steps).\n"
+            "4. NO REPETITION: Never start multiple bullet points with the same phrase. Keep it fresh.\n"
+            "5. BOLDING: Bold numbers, dates, and 'Must-Know' terms so they pop out.\n"
+        )
+
         if ai_mode:
-            # 🧠 GENERAL AI MODE: Relaxed rules, allowed to use internet knowledge
             system_prompt = (
-                "You are KnowCamp AI, an advanced and highly intelligent academic tutor. "
-                "You have access to the user's uploaded documents as Context, but you are ALSO allowed to use your vast general world knowledge.\n\n"
-                "INSTRUCTIONS:\n"
-                "1. If the user's question can be answered using the Context, prioritize using that specific information.\n"
-                "2. If the user asks you to 'expand', 'explain more', or asks a general question not found in the Context, seamlessly use your general knowledge to provide a highly detailed, comprehensive, and helpful answer.\n"
-                "3. You must maintain the context of the ongoing conversation.\n"
-                "4. CITATION REQUIREMENT: If you pull specific facts from the provided context, end your response with 'SOURCES: filename1.ext'. "
-                "If your answer relies primarily on your general knowledge, you MUST end your response with EXACTLY 'SOURCES: General World Knowledge'. Do not omit the SOURCES line.\n\n"
-                f"Context:\n{context}"
+                f"You are KnowCamp AI, a world-class premium academic and professional advisor. {personality_rules}\n"
+                "MODE: GENERAL AI (You may use Context + Your General Knowledge).\n\n"
+                f"Context:\n{context}\n\n"
+                "CITATION: End with 'SOURCES: filename.ext' or 'SOURCES: General World Knowledge'."
             )
         else:
-            # 📚 STRICT DOC MODE: The original closed-book exam rules
             system_prompt = (
-                "You are KnowCamp AI. You are taking a strict closed-book exam. "
-                "You MUST answer the user's question using ONLY the provided Context. "
-                "UNDER NO CIRCUMSTANCES are you allowed to use general knowledge. "
-                "If the answer cannot be logically deduced from the Context, you must reply with EXACTLY: 'Information not found in the uploaded documents.'\n\n"
-                "CRITICAL REASONING GUIDELINES:\n"
-                "1. Tabular Data: Logically connect row and column headers.\n"
-                "2. Academic Synonyms: Treat Roman numerals and numbers identically.\n"
-                "3. CITATION REQUIREMENT: If you use the provided context to answer the question, you MUST append a line at the very end of your response exactly like this: 'SOURCES: filename1.ext, filename2.ext'. "
-                "Only list the EXACT filenames of the documents you actually used.\n\n"
-                f"Context:\n{context}"
+                f"You are the KnowCamp Strict Data Vault. {personality_rules}\n\n"
+                f"--- BEGIN UPLOADED DOCUMENT CONTEXT ---\n"
+                f"{context}\n"
+                f"--- END UPLOADED DOCUMENT CONTEXT ---\n\n"
+                "### FINAL MANDATORY INSTRUCTIONS BEFORE ANSWERING ###\n"
+                "1. You are operating in STRICT DOC MODE. You have ZERO outside knowledge.\n"
+                "2. You MUST check the text between the BEGIN and END tags above. If the exact answer is not there, you do not know it.\n"
+                "3. If the user asks for a comparison involving companies, policies, or facts NOT explicitly written in the Context above, you MUST refuse to answer.\n"
+                "4. Do NOT invent generic comparisons. Do NOT try to be helpful with outside knowledge.\n"
+                "5. If the answer requires outside knowledge, output EXACTLY this string and nothing else: 'I cannot answer this. The uploaded documents do not contain the information required to address your query.'\n"
+                "6. CITATION: End valid answers with 'SOURCES: filename.ext'."
             )
         # -----------------------------------------------
+
+        groq_messages = [{"role": "system", "content": system_prompt}]
 
         groq_messages = [{"role": "system", "content": system_prompt}]
         for msg in past_messages[-4:]:
@@ -601,7 +644,7 @@ def get_all_users(token: str = Depends(oauth2_scheme), db: Session = Depends(get
     if payload.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Only admins can do this.")
 
-    users = db.query(models.User).all()
+    users = db.query(models.User).filter(models.User.institution_id == user_inst_id).all()
     return {"users": [{"id": u.id, "username": u.username, "role": u.role} for u in users]}
 
 @app.delete("/admin/users/{user_id}")
