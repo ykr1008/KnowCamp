@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import axios from 'axios';
 // 1. Added the Eye and EyeOff icons
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Building2} from 'lucide-react';
 
 const AuthComponent = ({ onLoginSuccess }) => {
   const [isLogin, setIsLogin] = useState(true);
-  const [formData, setFormData] = useState({ email: '', password: '', secretKey: '' });
+  const [formData, setFormData] = useState({ email: '', password: '', institution_name: '', secretKey: '' });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
@@ -31,6 +31,9 @@ const AuthComponent = ({ onLoginSuccess }) => {
         localStorage.setItem('token', response.data.access_token);
         localStorage.setItem('role', response.data.role); 
         localStorage.setItem('user_id', response.data.user_id);
+        if(response.data.institution_id) {
+            localStorage.setItem('institution_id', response.data.institution_id);
+        }
         onLoginSuccess(); 
 
       } else {
@@ -38,6 +41,7 @@ const AuthComponent = ({ onLoginSuccess }) => {
         await axios.post('http://127.0.0.1:8000/create_user/', {
           username: formData.email,
           password: formData.password,
+          institution_name: formData.institution_name,
           secret_key: formData.secretKey || "" 
         });
         
@@ -68,6 +72,22 @@ const AuthComponent = ({ onLoginSuccess }) => {
       {error && <div style={{ color: 'red', marginBottom: '15px', textAlign: 'center', fontSize: '14px', padding: '10px', backgroundColor: '#ffe6e6', borderRadius: '5px' }}>{error}</div>}
 
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+
+      {/* 3. NEW INSTITUTION FIELD (Only shows on Registration) */}
+        {!isLogin && (
+          <div style={{ position: 'relative', width: '100%' }}>
+            <Building2 color="#888" size={20} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
+            <input 
+              type="text" 
+              name="institution_name" 
+              placeholder="Institution Name (e.g., MIT, Stanford)" 
+              value={formData.institution_name} 
+              onChange={handleChange} 
+              required={!isLogin} // Only required when registering
+              style={{ padding: '12px 12px 12px 40px', borderRadius: '5px', border: '1px solid #ccc', color: '#333', backgroundColor: '#fff', width: '100%', boxSizing: 'border-box' }} 
+            />
+          </div>
+        )}
         <input 
           type="text" 
           name="email" 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 import datetime
@@ -94,7 +94,7 @@ class Document(Base):
     """Stores the files uploaded by Admins and Faculty."""
     __tablename__ = "documents"
     id = Column(Integer, primary_key=True, index=True)
-    filename = Column(String, unique=True, index=True) 
+    filename = Column(String, index=True) 
     uploaded_by = Column(String)
     upload_date = Column(DateTime, default=datetime.datetime.utcnow)
     category = Column(String) # 'general' (Admin Circulars) OR 'subject_notes' (Faculty)
@@ -104,6 +104,10 @@ class Document(Base):
     
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=True)
     subject = relationship("Subject", back_populates="documents")
+
+    __table_args__ = (
+        UniqueConstraint('filename', 'institution_id', name='_filename_institution_uc'),
+    )
 
 
 # ==========================================

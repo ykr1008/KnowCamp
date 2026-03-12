@@ -194,7 +194,7 @@ async def upload_document(
         raise HTTPException(status_code=403, detail="Not authorized to upload.")
 
     # --- FIX 1: GRACEFUL DUPLICATE CHECK ---
-    existing_doc = db.query(models.Document).filter(models.Document.filename == file.filename).first()
+    existing_doc = db.query(models.Document).filter(models.Document.filename == file.filename, models.Document.institution_id == user.institution_id).first()
     if existing_doc:
         raise HTTPException(status_code=400, detail=f"The file '{file.filename}' already exists! Please rename your file and try again.")
 
@@ -277,11 +277,24 @@ async def upload_document(
     return {"message": f"Successfully uploaded {file.filename}"}
 
 @app.get("/documents/")
-def get_documents(subject_id: Optional[int] = None, db: Session = Depends(get_db)):
+def get_documents(
+    subject_id: Optional[int] = None, 
+    db: Session = Depends(get_db), 
+    token: str = Depends(oauth2_scheme)
+):
+    # 1. Decode the token to get the user's details
+    payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
+    
+    # 🚨 THIS IS THE LINE THAT WAS MISSING! Grabbing the ID from the token:
+    user_inst_id = payload.get("inst_id")
     if subject_id:
-        docs = db.query(models.Document).filter(models.Document.subject_id == subject_id).all()
+        docs = db.query(models.Document).filter(
+            models.Document.subject_id == subject_id,
+            models.Document.institution_id == user_inst_id).all()
     else:
-        docs = db.query(models.Document).filter(models.Document.subject_id == None).all()
+        docs = db.query(models.Document).filter(
+            models.Document.subject_id == None,
+            models.Document.institution_id == user_inst_id).all()
         
     return {"documents": [{"id": d.id, "filename": d.filename, "uploaded_by": d.uploaded_by} for d in docs]}
 
@@ -295,7 +308,7 @@ def delete_document(
     payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
     user = db.query(models.User).filter(models.User.username == payload.get("sub")).first()
     
-    doc = db.query(models.Document).filter(models.Document.id == doc_id).first()
+    doc = db.query(models.Document).filter(models.Document.id == doc_id, models.Document.institution_id == user.institution_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -349,8 +362,29 @@ def get_my_chats(subject_id: Optional[int] = None, token: str = Depends(oauth2_s
 @app.get("/chat_history/{session_id}")
 def get_chat_history(session_id: int, token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     try:
+        # 1. Decode the token to figure out who is asking
+        payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
+        user = db.query(models.User).filter(models.User.username == payload.get("sub")).first()
+        
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        # 2. 🚨 THE FIX: Check if this user actually OWNS this chat session!
+        session = db.query(models.ChatSession).filter(
+            models.ChatSession.id == session_id,
+            models.ChatSession.user_id == user.id # <-- The Privacy Wall
+        ).first()
+        
+        if not session:
+            # If they don't own it (or it doesn't exist), deny access
+            raise HTTPException(status_code=403, detail="Unauthorized access to chat.")
+
+        # 3. If they passed the check, fetch their messages
         messages = db.query(models.ChatMessage).filter(models.ChatMessage.session_id == session_id).order_by(models.ChatMessage.created_at).all()
         return {"messages": [{"role": m.role, "content": m.content, "sources": m.sources or []} for m in messages]}
+        
+    except HTTPException:
+        raise # Let our specific 401/403 errors pass through to the frontend
     except Exception as e:
         raise HTTPException(status_code=500, detail="Could not load chat history")
 
@@ -527,8 +561,7 @@ def chat(
                 "2. You MUST check the text between the BEGIN and END tags above. If the exact answer is not there, you do not know it.\n"
                 "3. If the user asks for a comparison involving companies, policies, or facts NOT explicitly written in the Context above, you MUST refuse to answer.\n"
                 "4. Do NOT invent generic comparisons. Do NOT try to be helpful with outside knowledge.\n"
-                "5. If the answer requires outside knowledge, output EXACTLY this string and nothing else: 'I cannot answer this. The uploaded documents do not contain the information required to address your query.'\n"
-                "6. CITATION: End valid answers with 'SOURCES: filename.ext'."
+                "5. If the answer requires outside knowledge, you MUST begin your response with the exact token: [NO_RELEVANT_DATA]. After that token, you may politely explain that you cannot answer the question.'\n"
             )
         # -----------------------------------------------
 
@@ -551,10 +584,10 @@ def chat(
             # --- SMART RAG UPGRADE 3: Intercept and Filter ---
             final_answer = raw_answer
             
-            if "Information not found" in raw_answer:
-                # Force a clean answer and wipe out any confused LLM citations!
-                final_answer = "I couldn't find any relevant information in the uploaded documents."
-                sources_list = []
+            if "[NO_RELEVANT_DATA]" in raw_answer:
+                # Clean the token out so the user doesn't see it
+                final_answer = raw_answer.replace("[NO_RELEVANT_DATA]", "").strip()
+                sources_list = [] # Wipe the sources!
             elif "SOURCES:" in raw_answer:
                 # Split the text to remove the ugly 'SOURCES:' line from the UI
                 parts = raw_answer.split("SOURCES:")
@@ -604,11 +637,22 @@ def add_to_whitelist(request: WhitelistRequest, token: str = Depends(oauth2_sche
     if payload.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Only admins can do this.")
 
-    existing = db.query(models.ApprovedEmail).filter(models.ApprovedEmail.email == request.email).first()
+    # 1. Grab the short token key
+    admin_inst_id = payload.get("inst_id")
+
+    existing = db.query(models.ApprovedEmail).filter(
+        models.ApprovedEmail.email == request.email,
+        models.ApprovedEmail.institution_id == admin_inst_id
+    ).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email is already on the whitelist.")
 
-    new_approval = models.ApprovedEmail(email=request.email, assigned_role=request.assigned_role)
+    # 2. Assign it to the full database column
+    new_approval = models.ApprovedEmail(
+        email=request.email, 
+        assigned_role=request.assigned_role,
+        institution_id=admin_inst_id 
+    )
     db.add(new_approval)
     db.commit()
     return {"message": f"Added {request.email} as {request.assigned_role}"}
@@ -619,7 +663,8 @@ def get_whitelist(token: str = Depends(oauth2_scheme), db: Session = Depends(get
     if payload.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Only admins can do this.")
         
-    emails = db.query(models.ApprovedEmail).all()
+    admin_inst_id = payload.get("inst_id")
+    emails = db.query(models.ApprovedEmail).filter(models.ApprovedEmail.institution_id == admin_inst_id).all()
     return {"whitelist": [{"id": e.id, "email": e.email, "role": e.assigned_role} for e in emails]}
 
 @app.delete("/admin/whitelist/{email_id}")
@@ -627,8 +672,10 @@ def remove_from_whitelist(email_id: int, token: str = Depends(oauth2_scheme), db
     payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
     if payload.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Only admins can do this.")
+
+    admin_inst_id = payload.get("inst_id")
         
-    record = db.query(models.ApprovedEmail).filter(models.ApprovedEmail.id == email_id).first()
+    record = db.query(models.ApprovedEmail).filter(models.ApprovedEmail.id == email_id, models.ApprovedEmail.institution_id == admin_inst_id).first()
     if record:
         db.delete(record)
         db.commit()
@@ -644,7 +691,9 @@ def get_all_users(token: str = Depends(oauth2_scheme), db: Session = Depends(get
     if payload.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Only admins can do this.")
 
-    users = db.query(models.User).filter(models.User.institution_id == user_inst_id).all()
+    admin_inst_id = payload.get("inst_id")
+
+    users = db.query(models.User).filter(models.User.institution_id == admin_inst_id).all()
     return {"users": [{"id": u.id, "username": u.username, "role": u.role} for u in users]}
 
 @app.delete("/admin/users/{user_id}")
@@ -653,7 +702,9 @@ def delete_active_user(user_id: int, token: str = Depends(oauth2_scheme), db: Se
     if payload.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Only admins can do this.")
 
-    user = db.query(models.User).filter(models.User.id == user_id).first()
+    admin_inst_id = payload.get("inst_id")
+
+    user = db.query(models.User).filter(models.User.id == user_id, models.User.institution_id == admin_inst_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -694,7 +745,8 @@ def create_subject(subject: SubjectCreate, token: str = Depends(oauth2_scheme), 
         name=subject.name,
         year=subject.year,
         invite_code=invite_code,
-        faculty_id=user.id 
+        faculty_id=user.id,
+        institution_id=user.institution_id
     )
     db.add(new_subject)
     db.commit()
@@ -707,7 +759,7 @@ def join_subject(req: JoinSubject, token: str = Depends(oauth2_scheme), db: Sess
     payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
     user = db.query(models.User).filter(models.User.username == payload.get("sub")).first()
     
-    subject = db.query(models.Subject).filter(models.Subject.invite_code == req.invite_code).first()
+    subject = db.query(models.Subject).filter(models.Subject.invite_code == req.invite_code, models.Subject.institution_id == user.institution_id).first()
     if not subject:
         raise HTTPException(status_code=404, detail="Invalid invite code. Please check and try again.")
         
@@ -731,7 +783,7 @@ def get_my_subjects(token: str = Depends(oauth2_scheme), db: Session = Depends(g
     
     if user.role == "admin":
         # Admins see everything
-        subjects = db.query(models.Subject).all()
+        subjects = db.query(models.Subject).filter(models.Subject.institution_id == user.institution_id).all()
         
     elif user.role == "faculty":
         # 1. Fetch classes they created
@@ -776,7 +828,6 @@ def get_class_students(
     db: Session = Depends(get_db)
 ):
     try:
-        import jwt
         payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
         username = payload.get("sub")
         current_user = db.query(models.User).filter(models.User.username == username).first()
@@ -786,27 +837,40 @@ def get_class_students(
     if not current_user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    # (Authorization block removed so Students can view the roster)
-
-    subject = db.query(models.Subject).filter(models.Subject.id == subject_id).first()
+    subject = db.query(models.Subject).filter(
+        models.Subject.id == subject_id, 
+        models.Subject.institution_id == current_user.institution_id
+    ).first()
+    
     if not subject:
         raise HTTPException(status_code=404, detail="Class not found")
 
-    enrollments = db.query(models.Enrollment).filter(models.Enrollment.subject_id == subject_id).all()
+    # --- THE ROSTER MERGE FIX ---
+    roster_list = []
     
-    student_list = []
+    # 1. Fetch and Add the Faculty/Creator First (Pinned to the top)
+    if subject.faculty_id:
+        faculty = db.query(models.User).filter(models.User.id == subject.faculty_id).first()
+        if faculty:
+            roster_list.append({
+                "id": faculty.id,
+                "username": faculty.username,
+                "role": "instructor" # Special tag for your frontend!
+            })
+
+    # 2. Fetch and Add the Enrolled Students
+    enrollments = db.query(models.Enrollment).filter(models.Enrollment.subject_id == subject_id).all()
     for enrollment in enrollments:
         student = db.query(models.User).filter(models.User.id == enrollment.student_id).first()
         if student:
-            student_list.append({
+            roster_list.append({
                 "id": student.id,
                 "username": student.username,
                 "role": student.role
             })
 
-    return {"students": student_list}
-
-# ---> YOUR @app.delete("/subjects/{subject_id}/students/{student_id}") STARTS RIGHT HERE <---
+    # Note: Returning under the key "students" so your React state doesn't break
+    return {"students": roster_list}
 
 @app.delete("/subjects/{subject_id}/students/{student_id}")
 def remove_student_from_class(
@@ -815,33 +879,36 @@ def remove_student_from_class(
     token: str = Depends(oauth2_scheme), 
     db: Session = Depends(get_db)
 ):
-    # 1. Authenticate the User
+    # 1. Decode the Token ONLY
     try:
-        import jwt
-        # Adjust 'security.SECRET_KEY' and 'security.ALGORITHM' to match your actual imports
         payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
         username = payload.get("sub")
-        current_user = db.query(models.User).filter(models.User.username == username).first()
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid Authentication Token")
 
+    # 2. Fetch the User Safely (Outside the try/except!)
+    current_user = db.query(models.User).filter(models.User.username == username).first()
+    
     if not current_user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    # ... [Step 1: Authenticate User remains the same] ...
-
-    # 2. Check Authorization & Ownership (Strict RBAC)
-    # Block students immediately
+    # 3. Check Authorization & Ownership (Strict RBAC)
     if current_user.role == "student":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
             detail="Access Denied. Students cannot remove users."
         )
 
-    # Fetch the class
-    subject = db.query(models.Subject).filter(models.Subject.id == subject_id).first()
+    # Fetch the class and ensure it belongs to the same institution
+    subject = db.query(models.Subject).filter(
+        models.Subject.id == subject_id,
+        models.Subject.institution_id == current_user.institution_id
+    ).first()
+    
     if not subject:
         raise HTTPException(status_code=404, detail="Class not found.")
+
+    # ... The rest of your existing logic (faculty check, enrollment delete) stays the same ...
 
     # THE CRITICAL CHECK: Enforce Faculty Boundaries
     if current_user.role == "faculty":
@@ -881,7 +948,7 @@ def remove_faculty_from_class(
         import jwt
         payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
         username = payload.get("sub")
-        current_user = db.query(models.User).filter(models.User.username == username).first()
+        current_user = db.query(models.User).filter(models.User.username == username, models.Subject.institution_id == current_user.institution_id).first()
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid Authentication Token")
 
@@ -929,7 +996,7 @@ def delete_subject(
         raise HTTPException(status_code=401, detail="User not found")
 
     # 2. Find the Class
-    subject = db.query(models.Subject).filter(models.Subject.id == subject_id).first()
+    subject = db.query(models.Subject).filter(models.Subject.id == subject_id, models.Subject.institution_id == current_user.institution_id).first()
     if not subject:
         raise HTTPException(status_code=404, detail="Class not found")
 
@@ -958,3 +1025,48 @@ def delete_subject(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error during deletion: {str(e)}")
+
+
+@app.delete("/subjects/{subject_id}/leave")
+def leave_class(
+    subject_id: int, 
+    token: str = Depends(oauth2_scheme), 
+    db: Session = Depends(get_db)
+):
+    # 1. Safe Authentication
+    try:
+        payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
+        username = payload.get("sub")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid Authentication Token")
+
+    current_user = db.query(models.User).filter(models.User.username == username).first()
+    if not current_user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    subject = db.query(models.Subject).filter(
+        models.Subject.id == subject_id, 
+        models.Subject.institution_id == current_user.institution_id
+    ).first()
+    
+    if not subject:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    # 2. Scenario A: The Creator/Instructor is leaving
+    if subject.faculty_id == current_user.id:
+        subject.faculty_id = None # They step down, but the class remains
+        db.commit()
+        return {"message": "You have exited the class as the instructor."}
+
+    # 3. Scenario B: A Student (or a faculty enrolled as a student) is leaving
+    enrollment = db.query(models.Enrollment).filter(
+        models.Enrollment.subject_id == subject_id,
+        models.Enrollment.student_id == current_user.id
+    ).first()
+
+    if enrollment:
+        db.delete(enrollment)
+        db.commit()
+        return {"message": "You have successfully left the class."}
+
+    raise HTTPException(status_code=400, detail="You are not a member of this class.")

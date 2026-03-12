@@ -163,10 +163,13 @@ const ChatComponent = ({ onLogout }) => {
   // ================= STANDARD CHAT & DOC LOGIC =================
   const fetchDocuments = async () => {
     try {
+      const token = localStorage.getItem('token');
       let url = 'http://127.0.0.1:8000/documents/';
       if (currentSubject) url += `?subject_id=${currentSubject.id}`; // Only fetch docs for this room!
       
-      const response = await axios.get(url);
+      const response = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       setDocuments(response.data.documents);
     } catch (error) { console.error("Failed to fetch docs"); }
   };
