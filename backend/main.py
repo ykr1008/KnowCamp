@@ -489,13 +489,22 @@ def chat(
             search_filter["$and"].append({"source": filename})
 
         # Search the database securely
-        raw_results = vector_db.similarity_search_with_score(search_query, k=15, filter=search_filter)
+        # FIX 1: Don't grab 15 chunks! 5 is the sweet spot for accurate RAG.
+        raw_results = vector_db.similarity_search_with_score(search_query, k=5, filter=search_filter)
 
         # Quality Control Filter
         docs = []
         for doc, score in raw_results:
             print(f"DEBUG - File: {os.path.basename(doc.metadata.get('source', 'Unknown'))}, Score: {score}") 
-            docs.append(doc)
+            
+            # FIX 2: The Relevance Bouncer
+            # Note: ChromaDB typically uses L2 distance by default (Lower Score = Better Match).
+            # A score of 0.3 is a perfect match. A score of 1.5+ is usually garbage.
+            # We will only keep documents that score under 1.2.
+            if score < 1.2: 
+                docs.append(doc)
+            else:
+                print(f"DEBUG - 🛑 BLOCKED {os.path.basename(doc.metadata.get('source', 'Unknown'))} (Score too bad: {score})")
 
         # If database is empty or nothing passes
         if not docs:
