@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import axios from 'axios';
-import { Send, Loader2, Trash2, FileText, Plus, MessageSquare, User, LogOut, Menu, MoreVertical, Edit2, Users, X, UserCheck, Book, PlusCircle, LogIn, Hash, Home, ArrowLeft, Copy, Check} from 'lucide-react';
+import { Send, Loader2, Trash2, FileText, Plus, MessageSquare, User, LogOut, Menu, MoreVertical, Edit2, Users, X, UserCheck, Book, PlusCircle, LogIn, Hash, Home, ArrowLeft, Copy, Check, UploadCloud, CheckCircle, XCircle} from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 const ChatComponent = ({ onLogout }) => {
@@ -24,9 +24,9 @@ const ChatComponent = ({ onLogout }) => {
   const [editingChatId, setEditingChatId] = useState(null);
   const [editTitle, setEditTitle] = useState("");
 
-  // NEW PROGRESS BAR STATES
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  // --- BULK UPLOAD QUEUE STATES ---
+  const [uploadQueue, setUploadQueue] = useState([]);
+  const [isDragging, setIsDragging] = useState(false);
 
   // ADMIN DASHBOARD STATES
   const [showAdminPanel, setShowAdminPanel] = useState(false);
@@ -54,6 +54,19 @@ const ChatComponent = ({ onLogout }) => {
 
   // --- NEW: COPY TO CLIPBOARD STATE ---
   const [copiedSubjectId, setCopiedSubjectId] = useState(null);
+
+  // --- NEW: EXTRACT USERNAME FROM JWT TOKEN ---
+  const currentUsername = useMemo(() => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return null;
+      // Decode the middle part of the JWT where the data lives
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.sub; // In your backend, 'sub' is the username!
+    } catch (e) {
+      return null;
+    }
+  }, []);
 
   const handleCopyCode = (e, code, subjectId) => {
     e.stopPropagation(); // CRITICAL: Stops the click from opening the classroom!
@@ -230,14 +243,28 @@ const ChatComponent = ({ onLogout }) => {
   const fetchDocuments = async () => {
     try {
       const token = localStorage.getItem('token');
-      let url = 'http://127.0.0.1:8000/documents/';
-      if (currentSubject) url += `?subject_id=${currentSubject.id}`; // Only fetch docs for this room!
       
-      const response = await axios.get(url, {
-        headers: { Authorization: `Bearer ${token}` }
+      // Build smart query parameters
+      const queryParams = { 
+        t: Date.now() // THE CACHE BUSTER: Forces Chrome to make a fresh request!
+      }; 
+      
+      if (currentSubject) {
+        queryParams.subject_id = currentSubject.id;
+      }
+
+      const response = await axios.get('http://127.0.0.1:8000/documents/', {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Cache-Control': 'no-cache' // Extra instruction telling browsers not to lie to us
+        },
+        params: queryParams
       });
+      
       setDocuments(response.data.documents);
-    } catch (error) { console.error("Failed to fetch docs"); }
+    } catch (error) { 
+      console.error("Failed to fetch docs"); 
+    }
   };
 
   const fetchChats = async () => {
@@ -299,40 +326,61 @@ const ChatComponent = ({ onLogout }) => {
     }
   };
 
-  const handleUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    e.target.value = null; 
+  // 1. Handles the Drag & Drop OR the File Selection
+  const handleFileDrop = async (e) => {
+    e.preventDefault();
+    setIsDragging(false);
     
-    const formData = new FormData(); 
+    // Grab files from either a drop event or a click event
+    const files = Array.from(e.dataTransfer ? e.dataTransfer.files : e.target.files);
+    if (!files.length) return;
+    if (e.target) e.target.value = null; // Reset input
+
+    // Create tracking objects for each file
+    const newQueueItems = files.map(file => ({
+      id: Math.random().toString(36).substring(7), // Unique ID
+      file: file,
+      progress: 0,
+      status: 'pending', // 'pending' | 'uploading' | 'success' | 'error'
+      errorMessage: ''
+    }));
+
+    // Add them to the visual UI queue
+    setUploadQueue(prev => [...prev, ...newQueueItems]);
+
+    // 2. PROCESS SEQUENTIALLY (Protects your AI Parser & Database from crashing!)
+    for (const item of newQueueItems) {
+      await processSingleUpload(item.id, item.file);
+    }
+  };
+
+  // 3. The Actual Axios Request for a single file
+  const processSingleUpload = async (fileId, file) => {
+    // Update this specific file's status to 'uploading'
+    setUploadQueue(prev => prev.map(item => item.id === fileId ? { ...item, status: 'uploading' } : item));
+
+    const formData = new FormData();
     formData.append('file', file);
     if (currentSubject) formData.append('subject_id', currentSubject.id);
 
     try {
-      // 1. Start the loading UI
-      setIsUploading(true);
-      setUploadProgress(0);
-      
-      const token = localStorage.getItem('token'); 
+      const token = localStorage.getItem('token');
       await axios.post('http://127.0.0.1:8000/upload_document/', formData, {
         headers: { 'Content-Type': 'multipart/form-data', 'Authorization': `Bearer ${token}` },
-        
-        // 2. THIS IS THE MAGIC: Axios tells React exactly how many bytes are sent!
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          setUploadProgress(percentCompleted);
+          // Update the progress bar for THIS specific file
+          setUploadQueue(prev => prev.map(item => item.id === fileId ? { ...item, progress: percentCompleted } : item));
         }
       });
       
-      alert(`${file.name} uploaded successfully!`);
-      fetchDocuments(); 
-      setShowDocs(true); 
-    } catch (error) { 
-      alert(error.response?.data?.detail || "Upload failed."); 
-    } finally {
-      // 3. Turn off the loading UI whether it succeeds or fails
-      setIsUploading(false);
-      setUploadProgress(0);
+      // Mark as success!
+      setUploadQueue(prev => prev.map(item => item.id === fileId ? { ...item, status: 'success', progress: 100 } : item));
+      fetchDocuments(); // Refresh the sidebar list instantly so they see it appear
+      setShowDocs(true);
+    } catch (error) {
+      // Mark as error and show the exact API failure message
+      setUploadQueue(prev => prev.map(item => item.id === fileId ? { ...item, status: 'error', errorMessage: error.response?.data?.detail || "Upload failed" } : item));
     }
   };
 
@@ -596,29 +644,63 @@ const ChatComponent = ({ onLogout }) => {
                 <Plus size={18} color="#007bff" /> New Chat
               </button>
 
-              {/* Only Admins can upload to Global. Admins AND Faculty can upload to Classrooms. */}
-              {((userRole === 'admin' && activeView === 'global') || ((userRole === 'admin' || userRole === 'faculty') && activeView === 'classroom')) && (
+              {/* Strict Upload Check: Admins upload anywhere. Faculty ONLY upload if they own the current class. */}
+              {((userRole === 'admin') || 
+                (userRole === 'faculty' && activeView === 'classroom' && currentSubject?.faculty_id === parseInt(localStorage.getItem('user_id') || 0))) && (
                 <>
-                  <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', backgroundColor: 'transparent', border: '1px dashed #007bff', borderRadius: '8px', color: '#007bff', fontWeight: 'bold', marginBottom: '15px', fontSize: '14px' }}>
-                    <Plus size={16} /> Upload {activeView === 'global' ? 'Global Doc' : 'Class Material'}
-                    <input type="file" onChange={handleUpload} style={{ display: 'none' }} />
+                  {/* --- 1. THE DROPZONE --- */}
+                  <label 
+                    onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={handleFileDrop}
+                    style={{ 
+                      cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 10px', 
+                      backgroundColor: isDragging ? '#e8f0fe' : '#ffffff', 
+                      border: isDragging ? '2px dashed #1967d2' : '2px dashed #007bff', 
+                      borderRadius: '8px', color: isDragging ? '#1967d2' : '#007bff', fontWeight: 'bold', marginBottom: '15px', transition: 'all 0.2s', textAlign: 'center' 
+                    }}
+                  >
+                    <UploadCloud size={28} />
+                    <span style={{ fontSize: '14px' }}>{isDragging ? 'Drop files here!' : 'Drag & Drop or Click to Upload'}</span>
+                    <span style={{ fontSize: '11px', color: '#5f6368', fontWeight: 'normal' }}>Supports bulk PDF, DOCX, CSV</span>
+                    <input type="file" multiple onChange={handleFileDrop} style={{ display: 'none' }} />
                   </label>
 
-                  {/* --- NEW PROGRESS BAR UI --- */}
-                  {isUploading && (
-                    <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#ffffff', border: '1px solid #dcdfe3', borderRadius: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#5f6368', marginBottom: '6px', fontWeight: 'bold' }}>
-                        <span>{uploadProgress < 100 ? 'Uploading to server...' : 'Processing AI Memory...'}</span>
-                        <span>{uploadProgress}%</span>
+                  {/* --- 2. THE QUEUE LIST --- */}
+                  {uploadQueue.length > 0 && (
+                    <div style={{ marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '250px', overflowY: 'auto', paddingRight: '5px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', fontWeight: 'bold', color: '#5f6368' }}>
+                        <span>Upload Queue ({uploadQueue.length})</span>
+                        <button onClick={() => setUploadQueue([])} style={{ background: 'none', border: 'none', color: '#1967d2', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>Clear</button>
                       </div>
-                      <div style={{ width: '100%', backgroundColor: '#e1e5ea', borderRadius: '4px', height: '6px', overflow: 'hidden' }}>
-                        <div style={{ 
-                          height: '100%', 
-                          backgroundColor: uploadProgress < 100 ? '#007bff' : '#28a745', 
-                          width: `${uploadProgress}%`, 
-                          transition: 'width 0.3s ease, background-color 0.3s ease' 
-                        }}></div>
-                      </div>
+
+                      {uploadQueue.map(item => (
+                        <div key={item.id} style={{ padding: '10px', backgroundColor: '#ffffff', border: '1px solid #dcdfe3', borderRadius: '8px', fontSize: '12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontWeight: 'bold', color: '#1f1f1f' }}>
+                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px' }} title={item.file.name}>{item.file.name}</span>
+                            
+                            {/* Status Indicators */}
+                            {item.status === 'pending' && <span style={{ color: '#5f6368' }}>Waiting...</span>}
+                            {item.status === 'uploading' && <span style={{ color: '#007bff' }}>{item.progress < 100 ? `${item.progress}%` : 'Parsing AI...'}</span>}
+                            {item.status === 'success' && <CheckCircle size={14} color="#10b981" />}
+                            {item.status === 'error' && <XCircle size={14} color="#ff4d4d" />}
+                          </div>
+
+                          {/* Progress Bar or Error Message */}
+                          {item.status === 'error' ? (
+                            <div style={{ color: '#ff4d4d', fontSize: '11px', lineHeight: '1.2' }}>{item.errorMessage}</div>
+                          ) : (
+                            <div style={{ width: '100%', backgroundColor: '#e1e5ea', borderRadius: '4px', height: '4px', overflow: 'hidden' }}>
+                              <div style={{ 
+                                height: '100%', 
+                                backgroundColor: item.status === 'success' ? '#10b981' : '#007bff', 
+                                width: `${item.progress}%`, 
+                                transition: 'width 0.3s ease' 
+                              }}></div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </>
