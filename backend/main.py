@@ -1078,3 +1078,49 @@ def leave_class(
         return {"message": "You have successfully left the class."}
 
     raise HTTPException(status_code=400, detail="You are not a member of this class.")
+
+
+@app.post("/subjects/{subject_id}/claim")
+def claim_orphaned_class(
+    subject_id: int, 
+    token: str = Depends(oauth2_scheme), 
+    db: Session = Depends(get_db)
+):
+    # 1. Authenticate safely
+    try:
+        payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
+        username = payload.get("sub")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid Authentication Token")
+
+    user = db.query(models.User).filter(models.User.username == username).first()
+    
+    # 2. Strict Role Check
+    if not user or user.role != "faculty":
+        raise HTTPException(status_code=403, detail="Only faculty members can claim a class.")
+        
+    subject = db.query(models.Subject).filter(
+        models.Subject.id == subject_id, 
+        models.Subject.institution_id == user.institution_id
+    ).first()
+    
+    if not subject:
+        raise HTTPException(status_code=404, detail="Class not found")
+        
+    if subject.faculty_id is not None:
+        raise HTTPException(status_code=400, detail="This class already has an instructor.")
+        
+    # 3. Hand over the crown
+    subject.faculty_id = user.id
+    
+    # 4. Clean up: If they joined via invite code, they are in the student enrollments table. Remove them.
+    enrollment = db.query(models.Enrollment).filter(
+        models.Enrollment.student_id == user.id, 
+        models.Enrollment.subject_id == subject.id
+    ).first()
+    
+    if enrollment:
+        db.delete(enrollment)
+        
+    db.commit()
+    return {"message": "You are now the instructor of this class!"}

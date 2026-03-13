@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import axios from 'axios';
-import { Send, Loader2, Trash2, FileText, Plus, MessageSquare, User, LogOut, Menu, MoreVertical, Edit2, Users, X, UserCheck, Book, PlusCircle, LogIn, Hash, Home, ArrowLeft } from 'lucide-react';
+import { Send, Loader2, Trash2, FileText, Plus, MessageSquare, User, LogOut, Menu, MoreVertical, Edit2, Users, X, UserCheck, Book, PlusCircle, LogIn, Hash, Home, ArrowLeft, Copy, Check} from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 const ChatComponent = ({ onLogout }) => {
@@ -51,6 +51,20 @@ const ChatComponent = ({ onLogout }) => {
   // --- NEW: CLASS ROSTER STATES ---
   const [showRosterModal, setShowRosterModal] = useState(false);
   const [classStudents, setClassStudents] = useState([]);
+
+  // --- NEW: COPY TO CLIPBOARD STATE ---
+  const [copiedSubjectId, setCopiedSubjectId] = useState(null);
+
+  const handleCopyCode = (e, code, subjectId) => {
+    e.stopPropagation(); // CRITICAL: Stops the click from opening the classroom!
+    navigator.clipboard.writeText(code);
+    setCopiedSubjectId(subjectId);
+    
+    // Change back to the copy icon after 2 seconds
+    setTimeout(() => {
+      setCopiedSubjectId(null);
+    }, 2000);
+  };
 
   // Fetch the students for the current class
   const fetchClassStudents = async (subjectId) => {
@@ -868,6 +882,28 @@ const ChatComponent = ({ onLogout }) => {
             </div>
           )}
         </div>
+
+        {/* --- ORPHANED CLASS BANNER (Faculty AND Admins see this if the class is empty) --- */}
+        {activeView === 'classroom' && !currentSubject?.faculty_id && (userRole === 'faculty' || userRole === 'admin') && (
+          <div style={{ backgroundColor: '#fff3cd', color: '#856404', padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #ffeeba', fontSize: '14px' }}>
+            <span style={{ fontWeight: 'bold' }}>⚠️ This class currently has no instructor.</span>
+            <button 
+              onClick={async () => {
+                try {
+                  const token = localStorage.getItem('token');
+                  await axios.post(`http://127.0.0.1:8000/subjects/${currentSubject.id}/claim`, {}, { headers: { Authorization: `Bearer ${token}` } });
+                  alert("You have successfully claimed this class!");
+                  
+                  // Force React to completely clear the cache and reload
+                  window.location.reload(); 
+                } catch (err) { alert(err.response?.data?.detail || "Failed to claim class."); }
+              }}
+              style={{ backgroundColor: '#ffc107', color: '#212529', border: 'none', padding: '6px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
+            >
+              Claim Class
+            </button>
+          </div>
+        )}
         
         {/* --- DASHBOARD VIEW --- */}
         {activeView === 'dashboard' && (
@@ -909,9 +945,23 @@ const ChatComponent = ({ onLogout }) => {
                       </p>
                     </div>
                   </div>
-                  <div style={{ padding: '20px', backgroundColor: '#fff' }}>
+                  <div style={{ padding: '15px 20px', backgroundColor: '#fff', borderTop: '1px solid #f0f4f9', display: 'flex', alignItems: 'center' }}>
                     {(userRole === 'admin' || userRole === 'faculty') && (
-                      <div style={{ color: '#5f6368', fontSize: '0.9rem' }}><Hash size={16} /> Code: <strong>{subject.invite_code}</strong></div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#f8f9fa', padding: '6px 12px', borderRadius: '6px', border: '1px solid #e1e5ea' }}>
+                        <Hash size={14} color="#5f6368" /> 
+                        <span style={{ color: '#5f6368', fontSize: '0.85rem' }}>
+                          Code: <strong style={{ color: '#1f1f1f', letterSpacing: '1px' }}>{subject.invite_code}</strong>
+                        </span>
+                        
+                        {/* The Smart Copy Button */}
+                        <button 
+                          onClick={(e) => handleCopyCode(e, subject.invite_code, subject.id)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center', color: copiedSubjectId === subject.id ? '#10b981' : '#007bff', marginLeft: '5px' }}
+                          title="Copy Invite Code"
+                        >
+                          {copiedSubjectId === subject.id ? <Check size={16} /> : <Copy size={16} />}
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
