@@ -748,8 +748,10 @@ const ChatComponent = ({ onLogout }) => {
                           <MessageSquare size={14} />
                         </button>
 
-                        {/* 4. EXISTING DELETE BUTTON: Note the class changed to "doc-btn" so hover works for both */}
-                        {(userRole === 'admin' || (userRole === 'faculty' && doc.uploaded_by === localStorage.getItem('sub'))) && (
+                        {/* 4. UPGRADED DELETE BUTTON: Admins, Class Owners, OR File Owners can delete */}
+                        {(userRole === 'admin' || 
+                          (userRole === 'faculty' && currentSubject?.faculty_id === parseInt(localStorage.getItem('user_id') || 0)) || 
+                          doc.uploaded_by === currentUsername) && (
                           <button className="doc-btn" onClick={() => deleteDocument(doc.id)} style={{ display: 'none', background: 'none', border: 'none', color: '#ff4d4d', cursor: 'pointer', padding: '2px' }} title="Delete File">
                             <Trash2 size={14} />
                           </button>
