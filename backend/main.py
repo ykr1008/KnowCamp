@@ -943,31 +943,39 @@ def remove_faculty_from_class(
     token: str = Depends(oauth2_scheme), 
     db: Session = Depends(get_db)
 ):
-    # 1. Authenticate the User
+    # 1. Decode the Token ONLY (inside the try/except)
     try:
-        import jwt
         payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
         username = payload.get("sub")
-        current_user = db.query(models.User).filter(models.User.username == username, models.Subject.institution_id == current_user.institution_id).first()
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid Authentication Token")
 
-    # 2. Strict Admin-Only Authorization
-    if not current_user or current_user.role != "admin":
+    # 2. Fetch the User Safely (Outside the try/except!)
+    current_user = db.query(models.User).filter(models.User.username == username).first()
+    
+    if not current_user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # 3. Strict Admin-Only Authorization
+    if current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
             detail="Absolute Access Denied. Only Admins can remove faculty from a class."
         )
 
-    # 3. Fetch the Subject
-    subject = db.query(models.Subject).filter(models.Subject.id == subject_id).first()
+    # 4. Fetch the Subject and verify it belongs to this institution
+    subject = db.query(models.Subject).filter(
+        models.Subject.id == subject_id,
+        models.Subject.institution_id == current_user.institution_id
+    ).first()
+    
     if not subject:
         raise HTTPException(status_code=404, detail="Class not found.")
 
     if subject.faculty_id is None:
         return {"message": "This class currently has no faculty assigned."}
 
-    # 4. Safely remove the faculty member (DOES NOT delete their account)
+    # 5. Safely remove the faculty member (DOES NOT delete their account)
     try:
         subject.faculty_id = None  # Erase the professor from the class
         db.commit()

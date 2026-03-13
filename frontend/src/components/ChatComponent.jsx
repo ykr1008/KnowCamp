@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import axios from 'axios';
 import { Send, Loader2, Trash2, FileText, Plus, MessageSquare, User, LogOut, Menu, MoreVertical, Edit2, Users, X, UserCheck, Book, PlusCircle, LogIn, Hash, Home, ArrowLeft } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -68,19 +68,71 @@ const ChatComponent = ({ onLogout }) => {
   };
 
   // Trigger the backend deletion endpoint we built
-  const removeStudentFromClass = async (studentId) => {
-    if (!window.confirm("Remove this student from the class?")) return;
+  const removeUserFromClass = async (targetUser) => {
+    if (!window.confirm(`Remove ${targetUser.username} from the class?`)) return;
+    
     try {
       const token = localStorage.getItem('token');
-      await axios.delete(`http://127.0.0.1:8000/subjects/${currentSubject.id}/students/${studentId}`, { 
-        headers: { Authorization: `Bearer ${token}` } 
-      });
+      
+      // If the target is the instructor, hit the faculty endpoint
+      if (targetUser.role === 'instructor') {
+         await axios.put(`http://127.0.0.1:8000/subjects/${currentSubject.id}/remove_faculty`, {}, { 
+           headers: { Authorization: `Bearer ${token}` } 
+         });
+      } else {
+         // Otherwise, hit the student enrollment endpoint
+         await axios.delete(`http://127.0.0.1:8000/subjects/${currentSubject.id}/students/${targetUser.id}`, { 
+           headers: { Authorization: `Bearer ${token}` } 
+         });
+      }
+      
       // Refresh the list instantly!
       fetchClassStudents(currentSubject.id);
     } catch (error) { 
-      alert(error.response?.data?.detail || "Failed to remove student."); 
+      alert(error.response?.data?.detail || "Failed to remove user."); 
     }
   };
+
+  const handleLeaveClass = async () => {
+    if (!window.confirm("Are you sure you want to exit this class?")) return;
+    try {
+      const token = localStorage.getItem('token');
+      await axios.delete(`http://127.0.0.1:8000/subjects/${currentSubject.id}/leave`, { 
+        headers: { Authorization: `Bearer ${token}` } 
+      });
+      alert("You have left the class.");
+      setShowRosterModal(false);
+      goDashboard(); // Kick them out to the dashboard
+    } catch (error) { 
+      alert(error.response?.data?.detail || "Failed to leave class."); 
+    }
+  };
+
+  // --- NEW: SMART ROSTER SORTING LOGIC ---
+  const sortedClassStudents = useMemo(() => {
+    if (!classStudents.length) return [];
+
+    const myUserId = parseInt(localStorage.getItem('user_id') || 0);
+
+    // 1. Find the key players
+    const me = classStudents.find(user => user.id === myUserId);
+    const instructor = classStudents.find(user => user.role === "instructor" && user.id !== myUserId);
+
+    // 2. Filter out me and the instructor, then alphabetize the rest
+    const otherStudents = classStudents
+      .filter(user => user.id !== myUserId && user.role !== "instructor")
+      .sort((a, b) => a.username.localeCompare(b.username));
+
+    // 3. Construct the array based on WHO is looking at it
+    if (userRole === "student") {
+      // Students see themselves first, then the instructor
+      return [me, instructor, ...otherStudents].filter(Boolean);
+    } else {
+      // Admins and Faculty see the Instructor first, then themselves (if they aren't the instructor)
+      return [instructor, me, ...otherStudents].filter(Boolean);
+    }
+  }, [classStudents, userRole]);
+  // ----------------------------------------
 
   // --- DELETE CLASSROOM ---
   const handleDeleteClass = async () => {
@@ -697,34 +749,66 @@ const ChatComponent = ({ onLogout }) => {
             </div>
             
             <div style={{ overflowY: 'auto', flex: 1 }}>
-              {classStudents.length === 0 ? (
+              {sortedClassStudents.length === 0 ? (
                 <p style={{ textAlign: 'center', color: '#888' }}>No students enrolled yet.</p>
               ) : (
-                classStudents.map((student, index) => {
+                // Use the NEW sorted array instead of classStudents
+                sortedClassStudents.map((student, index) => {
                   
-                  // THE SECURE FRONTEND CHECK
-                  // We need the logged-in user's ID to check if they own this class.
                   const myUserId = parseInt(localStorage.getItem('user_id') || 0);
                   
-                  const canRemoveStudent = 
-                    userRole === 'admin' || 
-                    (userRole === 'faculty' && currentSubject?.faculty_id === myUserId);
+                  // LOGIC 1: Is this my own row?
+                  const isMe = student.id === myUserId;
+                  
+                  // LOGIC 2: Can I remove this person?
+                  // An Admin can remove ANYONE (except themselves).
+                  // A Faculty member can only remove STUDENTS (if they own the class).
+                  const canRemove = 
+                    !isMe && (
+                      userRole === 'admin' || 
+                      (userRole === 'faculty' && currentSubject?.faculty_id === myUserId && student.role !== "instructor")
+                    );
 
                   return (
-                    <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f0f0f0' }}>
-                      <span style={{ color: '#1f1f1f', fontWeight: '500' }}>{student.username}</span>
+                    <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f0f0f0', backgroundColor: isMe ? '#f8f9fa' : 'transparent' }}>
                       
-                      {/* Only renders the red button if they pass the security check! */}
-                      {canRemoveStudent && (
-                        <button 
-                          onClick={() => removeStudentFromClass(student.id)} 
-                          style={{ color: '#ff4d4d', backgroundColor: '#fce8e6', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                          onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#fad2cf'} 
-                          onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#fce8e6'}
-                        >
-                          Remove
-                        </button>
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ color: '#1f1f1f', fontWeight: isMe ? 'bold' : '500' }}>
+                          {student.username} {isMe && "(You)"}
+                        </span>
+                        {/* Add the Crown Badge for the Instructor! */}
+                        {student.role === "instructor" && (
+                          <span style={{ backgroundColor: '#fff3cd', color: '#856404', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', border: '1px solid #ffeeba' }}>
+                            Instructor 👑
+                          </span>
+                        )}
+                      </div>
+                      
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        {/* RENDER EXIT BUTTON (If it's me) */}
+                        {isMe && (
+                          <button 
+                            onClick={handleLeaveClass} 
+                            style={{ color: '#5f6368', backgroundColor: '#e1e5ea', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#d3d7dc'} 
+                            onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#e1e5ea'}
+                          >
+                            Exit Class
+                          </button>
+                        )}
+
+                        {/* RENDER REMOVE BUTTON (If I have permission) */}
+                        {canRemove && (
+                          <button 
+                            onClick={() => removeUserFromClass(student)} 
+                            style={{ color: '#ff4d4d', backgroundColor: '#fce8e6', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#fad2cf'} 
+                            onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#fce8e6'}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })
@@ -760,15 +844,14 @@ const ChatComponent = ({ onLogout }) => {
           {activeView === 'classroom' && (
             <div style={{ display: 'flex', gap: '10px' }}>
               
-              {/* Existing Manage Button */}
-              {(userRole === 'admin' || userRole === 'faculty') && (
+              {/* Roster Button (Visible to Everyone) */}
                 <button 
                   onClick={() => fetchClassStudents(currentSubject.id)}
                   style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', backgroundColor: '#e8f0fe', color: '#1967d2', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}
                 >
                   <Users size={18} /> Manage Class
                 </button>
-              )}
+              
 
               {/* NEW DELETE BUTTON (Strict RBAC applied) */}
               {(userRole === 'admin' || (userRole === 'faculty' && currentSubject?.faculty_id === parseInt(localStorage.getItem('user_id') || 0))) && (
