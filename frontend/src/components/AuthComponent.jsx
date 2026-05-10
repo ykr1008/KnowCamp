@@ -2,6 +2,7 @@ import { useState } from 'react';
 import axios from 'axios';
 // 1. Added the Eye and EyeOff icons
 import { Eye, EyeOff, Building2} from 'lucide-react';
+const API = import.meta.env.VITE_API_URL;
 
 const AuthComponent = ({ onLoginSuccess }) => {
   const [isLogin, setIsLogin] = useState(true);
@@ -27,7 +28,7 @@ const AuthComponent = ({ onLoginSuccess }) => {
         formBody.append('username', formData.email);
         formBody.append('password', formData.password);
 
-        const response = await axios.post('http://127.0.0.1:8000/login', formBody);
+        const response = await axios.post('${API}/login', formBody);
         localStorage.setItem('token', response.data.access_token);
         localStorage.setItem('role', response.data.role); 
         localStorage.setItem('user_id', response.data.user_id);
@@ -38,7 +39,7 @@ const AuthComponent = ({ onLoginSuccess }) => {
 
       } else {
         // REGISTER LOGIC
-        await axios.post('http://127.0.0.1:8000/create_user/', {
+        await axios.post('${API}/create_user/', {
           username: formData.email,
           password: formData.password,
           institution_name: formData.institution_name,

@@ -2,15 +2,9 @@ import os
 import shutil
 import random
 import string
-import docx
-import datetime
+
 from typing import Optional, List
-import pandas as pd
-from PIL import Image
-import pytesseract
-import pdfplumber
-# IMPORTANT: If Tesseract isn't in your system PATH, uncomment and set this line!
-# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
 from fastapi.staticfiles import StaticFiles
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, status, Form
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
@@ -29,7 +23,6 @@ from database import engine, get_db
 # The corrected imports:
 from processor import CHROMA_PATH, embeddings
 from langchain_community.vectorstores import Chroma
-from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader, CSVLoader, UnstructuredExcelLoader, UnstructuredImageLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from dotenv import load_dotenv
 
@@ -646,12 +639,6 @@ def chat(
         print(f"🚨 ACTUAL CRITICAL ERROR: {error_msg}")
         fallback_answer = f"🔍 DEBUG ERROR: {error_msg}"
         return {"answer": fallback_answer, "sources": [], "session_id": session_id or 0}
-
-@app.post("/reset")
-def reset_chat():
-    global chat_session
-    chat_session = model.start_chat(history=[])
-    return {"status": "success", "message": "Chat history cleared"}
 
 
 # ==========================================

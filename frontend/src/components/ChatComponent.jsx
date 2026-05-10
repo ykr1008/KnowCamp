@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import axios from 'axios';
 import { Send, Loader2, Trash2, FileText, Plus, MessageSquare, User, LogOut, Menu, MoreVertical, Edit2, Users, X, UserCheck, Book, PlusCircle, LogIn, Hash, Home, ArrowLeft, Copy, Check, UploadCloud, CheckCircle, XCircle} from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+const API = import.meta.env.VITE_API_URL;
 
 const ChatComponent = ({ onLogout }) => {
   const [messages, setMessages] = useState([]);
@@ -84,7 +85,7 @@ const ChatComponent = ({ onLogout }) => {
     try {
       const token = localStorage.getItem('token');
       // Note: Make sure you have this GET endpoint in your FastAPI backend!
-      const response = await axios.get(`http://127.0.0.1:8000/subjects/${subjectId}/students`, { 
+      const response = await axios.get(`${API}/subjects/${subjectId}/students`, { 
         headers: { Authorization: `Bearer ${token}` } 
       });
       setClassStudents(response.data.students || []);
@@ -103,12 +104,12 @@ const ChatComponent = ({ onLogout }) => {
       
       // If the target is the instructor, hit the faculty endpoint
       if (targetUser.role === 'instructor') {
-         await axios.put(`http://127.0.0.1:8000/subjects/${currentSubject.id}/remove_faculty`, {}, { 
+         await axios.put(`${API}/subjects/${currentSubject.id}/remove_faculty`, {}, { 
            headers: { Authorization: `Bearer ${token}` } 
          });
       } else {
          // Otherwise, hit the student enrollment endpoint
-         await axios.delete(`http://127.0.0.1:8000/subjects/${currentSubject.id}/students/${targetUser.id}`, { 
+         await axios.delete(`${API}/subjects/${currentSubject.id}/students/${targetUser.id}`, { 
            headers: { Authorization: `Bearer ${token}` } 
          });
       }
@@ -124,7 +125,7 @@ const ChatComponent = ({ onLogout }) => {
     if (!window.confirm("Are you sure you want to exit this class?")) return;
     try {
       const token = localStorage.getItem('token');
-      await axios.delete(`http://127.0.0.1:8000/subjects/${currentSubject.id}/leave`, { 
+      await axios.delete(`${API}/subjects/${currentSubject.id}/leave`, { 
         headers: { Authorization: `Bearer ${token}` } 
       });
       alert("You have left the class.");
@@ -167,7 +168,7 @@ const ChatComponent = ({ onLogout }) => {
     
     try {
       const token = localStorage.getItem('token');
-      await axios.delete(`http://127.0.0.1:8000/subjects/${currentSubject.id}`, {
+      await axios.delete(`${API}/subjects/${currentSubject.id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       alert("Class deleted successfully.");
@@ -193,7 +194,7 @@ const ChatComponent = ({ onLogout }) => {
   const fetchSubjects = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://127.0.0.1:8000/subjects/', { headers: { Authorization: `Bearer ${token}` } });
+      const response = await axios.get('${API}/subjects/', { headers: { Authorization: `Bearer ${token}` } });
       setSubjects(response.data.subjects);
     } catch (error) { console.error("Failed to fetch subjects"); }
   };
@@ -203,7 +204,7 @@ const ChatComponent = ({ onLogout }) => {
     if (!newClassName.trim() || !newClassYear.trim()) return;
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.post('http://127.0.0.1:8000/subjects/', 
+      const response = await axios.post('${API}/subjects/', 
         { name: newClassName, year: newClassYear }, { headers: { Authorization: `Bearer ${token}` } }
       );
       alert(`Class created! The invite code is: ${response.data.invite_code}`);
@@ -216,7 +217,7 @@ const ChatComponent = ({ onLogout }) => {
     if (!joinCode.trim()) return;
     try {
       const token = localStorage.getItem('token');
-      await axios.post('http://127.0.0.1:8000/subjects/join/', { invite_code: joinCode }, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.post('${API}/subjects/join/', { invite_code: joinCode }, { headers: { Authorization: `Bearer ${token}` } });
       alert("Successfully joined the class!");
       setShowJoinClassModal(false); setJoinCode(""); fetchSubjects();
     } catch (error) { alert(error.response?.data?.detail || "Failed to join class. Check the code."); }
@@ -253,7 +254,7 @@ const ChatComponent = ({ onLogout }) => {
         queryParams.subject_id = currentSubject.id;
       }
 
-      const response = await axios.get('http://127.0.0.1:8000/documents/', {
+      const response = await axios.get('${API}/documents/', {
         headers: { 
           Authorization: `Bearer ${token}`,
           'Cache-Control': 'no-cache' // Extra instruction telling browsers not to lie to us
@@ -270,7 +271,7 @@ const ChatComponent = ({ onLogout }) => {
   const fetchChats = async () => {
     try {
       const token = localStorage.getItem('token');
-      let url = 'http://127.0.0.1:8000/my_chats/';
+      let url = '${API}/my_chats/';
       if (currentSubject) url += `?subject_id=${currentSubject.id}`; // Only fetch chats for this room!
 
       const response = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -282,7 +283,7 @@ const ChatComponent = ({ onLogout }) => {
     if (menuOpenId === sessionId || editingChatId === sessionId) return;
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get(`http://127.0.0.1:8000/chat_history/${sessionId}`, { headers: { Authorization: `Bearer ${token}` } });
+      const response = await axios.get(`${API}/chat_history/${sessionId}`, { headers: { Authorization: `Bearer ${token}` } });
       setMessages(response.data.messages);
       setCurrentSessionId(sessionId);
     } catch (error) { console.error("Failed to load chat"); }
@@ -295,7 +296,7 @@ const ChatComponent = ({ onLogout }) => {
     if (!window.confirm("Delete this conversation?")) return;
     try {
       const token = localStorage.getItem('token');
-      await axios.delete(`http://127.0.0.1:8000/my_chats/${sessionId}`, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.delete(`${API}/my_chats/${sessionId}`, { headers: { Authorization: `Bearer ${token}` } });
       fetchChats(); 
       if (currentSessionId === sessionId) startNewChat();
     } catch (error) { alert("Failed to delete chat."); }
@@ -315,7 +316,7 @@ const ChatComponent = ({ onLogout }) => {
     }
     try {
       const token = localStorage.getItem('token');
-      await axios.put(`http://127.0.0.1:8000/my_chats/${sessionId}`, 
+      await axios.put(`${API}/my_chats/${sessionId}`, 
         { title: editTitle }, 
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -365,7 +366,7 @@ const ChatComponent = ({ onLogout }) => {
 
     try {
       const token = localStorage.getItem('token');
-      await axios.post('http://127.0.0.1:8000/upload_document/', formData, {
+      await axios.post('${API}/upload_document/', formData, {
         headers: { 'Content-Type': 'multipart/form-data', 'Authorization': `Bearer ${token}` },
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -388,7 +389,7 @@ const ChatComponent = ({ onLogout }) => {
     if (!window.confirm("Remove this document?")) return;
     try {
       const token = localStorage.getItem('token'); // 1. Get the token
-      await axios.delete(`http://127.0.0.1:8000/documents/${docId}/`, {
+      await axios.delete(`${API}/documents/${docId}/`, {
         headers: { Authorization: `Bearer ${token}` } // 2. Send the token!
       });
       fetchDocuments(); 
@@ -414,7 +415,7 @@ const ChatComponent = ({ onLogout }) => {
     try {
       const token = localStorage.getItem('token'); 
       // 👇 NEW: Added ai_mode to the URL
-      let url = `http://127.0.0.1:8000/chat/?question=${encodeURIComponent(input)}&ai_mode=${aiMode}`;      if (currentSessionId) url += `&session_id=${currentSessionId}`;
+      let url = `${API}/chat/?question=${encodeURIComponent(input)}&ai_mode=${aiMode}`;      if (currentSessionId) url += `&session_id=${currentSessionId}`;
       if (currentSubject) url += `&subject_id=${currentSubject.id}`; // Tell AI which room to search!
       
       if (activeDocument) url += `&filename=${encodeURIComponent(activeDocument.filename)}`;
@@ -445,7 +446,7 @@ const ChatComponent = ({ onLogout }) => {
     try {
       const token = localStorage.getItem('token'); 
       // 👇 NEW: Added ai_mode to the URL
-      let url = `http://127.0.0.1:8000/chat/?question=${encodeURIComponent(actionText)}&ai_mode=${aiMode}`;      if (currentSessionId) url += `&session_id=${currentSessionId}`;
+      let url = `${API}/chat/?question=${encodeURIComponent(actionText)}&ai_mode=${aiMode}`;      if (currentSessionId) url += `&session_id=${currentSessionId}`;
       if (currentSubject) url += `&subject_id=${currentSubject.id}`;
       if (activeDocument) url += `&filename=${encodeURIComponent(activeDocument.filename)}`;
 
@@ -469,7 +470,7 @@ const ChatComponent = ({ onLogout }) => {
   const fetchWhitelist = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://127.0.0.1:8000/admin/whitelist/', { headers: { Authorization: `Bearer ${token}` } });
+      const response = await axios.get('${API}/admin/whitelist/', { headers: { Authorization: `Bearer ${token}` } });
       setWhitelist(response.data.whitelist || []);
     } catch (error) { console.error("Failed to fetch whitelist"); }
   };
@@ -479,7 +480,7 @@ const ChatComponent = ({ onLogout }) => {
     if (!newEmail.trim()) return;
     try {
       const token = localStorage.getItem('token');
-      await axios.post('http://127.0.0.1:8000/admin/whitelist/', 
+      await axios.post('${API}/admin/whitelist/', 
         { email: newEmail, assigned_role: newRole }, 
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -495,7 +496,7 @@ const ChatComponent = ({ onLogout }) => {
     if (!window.confirm("Remove this email from the whitelist?")) return;
     try {
       const token = localStorage.getItem('token');
-      await axios.delete(`http://127.0.0.1:8000/admin/whitelist/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.delete(`${API}/admin/whitelist/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       fetchWhitelist(); // Refresh the list
     } catch (error) { alert("Failed to remove from whitelist."); }
   };
@@ -504,7 +505,7 @@ const ChatComponent = ({ onLogout }) => {
   const fetchActiveUsers = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://127.0.0.1:8000/admin/users/', { headers: { Authorization: `Bearer ${token}` } });
+      const response = await axios.get('${API}/admin/users/', { headers: { Authorization: `Bearer ${token}` } });
       setActiveUsers(response.data.users || []);
     } catch (error) { console.error("Failed to fetch users"); }
   };
@@ -514,7 +515,7 @@ const ChatComponent = ({ onLogout }) => {
     if (!window.confirm("PERMANENTLY delete this user and all their chats?")) return;
     try {
       const token = localStorage.getItem('token');
-      await axios.delete(`http://127.0.0.1:8000/admin/users/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.delete(`${API}/admin/users/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       fetchActiveUsers(); // Refresh the list!
     } catch (error) { alert("Failed to delete user."); }
   };
@@ -975,7 +976,7 @@ const ChatComponent = ({ onLogout }) => {
               onClick={async () => {
                 try {
                   const token = localStorage.getItem('token');
-                  await axios.post(`http://127.0.0.1:8000/subjects/${currentSubject.id}/claim`, {}, { headers: { Authorization: `Bearer ${token}` } });
+                  await axios.post(`${API}/subjects/${currentSubject.id}/claim`, {}, { headers: { Authorization: `Bearer ${token}` } });
                   alert("You have successfully claimed this class!");
                   
                   // Force React to completely clear the cache and reload
@@ -1125,7 +1126,7 @@ const ChatComponent = ({ onLogout }) => {
                                     
                                     {/* CLICKABLE LINK (Global View) - NOW USES cleanFileName */}
                                     <a 
-                                      href={`http://127.0.0.1:8000/files/${cleanFileName}`} 
+                                      href={`${API}/files/${cleanFileName}`} 
                                       target="_blank" 
                                       rel="noopener noreferrer"
                                       style={{ color: '#1a0dab', textDecoration: 'none' }}
@@ -1138,7 +1139,7 @@ const ChatComponent = ({ onLogout }) => {
                                 ) : (
                                   /* CLICKABLE LINK (Class View / Global Docs) - NOW USES cleanFileName */
                                   <a 
-                                    href={`http://127.0.0.1:8000/files/${cleanFileName}`} 
+                                    href={`${API}/files/${cleanFileName}`} 
                                     target="_blank" 
                                     rel="noopener noreferrer"
                                     style={{ color: '#1a0dab', textDecoration: 'none' }}
