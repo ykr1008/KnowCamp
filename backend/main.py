@@ -33,6 +33,8 @@ from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, Te
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from dotenv import load_dotenv
 
+from pydantic import BaseModel, validator
+from typing import Optional
 # Load environment variables from the .env file
 load_dotenv()
 
@@ -78,6 +80,21 @@ class UserCreate(BaseModel):
     password: str
     institution_name: str
     secret_key: Optional[str] = None
+
+    @validator('password')
+    def validate_password(cls, v):
+        errors = []
+        if len(v) < 8:
+            errors.append("at least 8 characters")
+        if not any(c.isupper() for c in v):
+            errors.append("one uppercase letter")
+        if not any(c.islower() for c in v):
+            errors.append("one lowercase letter")
+        if not any(c.isdigit() for c in v):
+            errors.append("one number")
+        if errors:
+            raise ValueError(f"Password must have: {', '.join(errors)}")
+        return v
 
 class WhitelistRequest(BaseModel):
     email: str
@@ -501,7 +518,7 @@ def chat(
             # Note: ChromaDB typically uses L2 distance by default (Lower Score = Better Match).
             # A score of 0.3 is a perfect match. A score of 1.5+ is usually garbage.
             # We will only keep documents that score under 1.2.
-            if score < 1.2: 
+            if score < 1.5: 
                 docs.append(doc)
             else:
                 print(f"DEBUG - 🛑 BLOCKED {os.path.basename(doc.metadata.get('source', 'Unknown'))} (Score too bad: {score})")
