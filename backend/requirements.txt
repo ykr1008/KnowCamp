@@ -11,7 +11,6 @@ passlib[bcrypt]
 PyJWT
 bcrypt==4.0.1
 pydantic>=2.8.0
-pydantic-settings
 
 # --- AI & LangChain ---
 groq
@@ -24,13 +23,7 @@ chromadb
 
 # --- Document Parsing Engines ---
 pypdf
-pdfplumber
-python-docx
 docx2txt
-pandas
 openpyxl
-Pillow
-pytesseract
-opencv-python-headless
 numpy
 llama-parse
