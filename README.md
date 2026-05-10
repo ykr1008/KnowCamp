@@ -23,7 +23,7 @@ Secure, JWT-driven authentication with three distinct permission tiers:
 
 ### 📂 Advanced Document Management
 * **Sequential Bulk Upload Queue:** A sleek, drag-and-drop React dropzone that queues multiple files (PDF, DOCX, CSV) and uploads them sequentially to protect server memory.
-* **Lightning-Fast Local Parsing:** Utilizes LangChain's local document loaders to extract and chunk text in milliseconds before vectorizing.
+* **Lightning-Fast Local Parsing:** Utilizes LlamaParse Vision AI for layout-aware document parsing to extract and chunk text in milliseconds before vectorizing.
 * **Smart Caching:** Cache-busting architecture ensures the UI updates dynamically without requiring hard browser reloads.
 
 ## 🛠️ Technology Stack
