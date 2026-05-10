@@ -7,7 +7,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Change this to a random string for your final project
-SECRET_KEY = "yadhus_very_secret_key_change_this_later" 
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY not set in environment variables!") 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 
 

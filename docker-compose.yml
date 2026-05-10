@@ -20,8 +20,11 @@ services:
     volumes:
       - ./backend:/app  # <--- THIS IS THE MAGIC! It links your VS Code to the container for live editing.
     environment:
-      # Tell FastAPI how to talk to the new Docker database
-      - DATABASE_URL=postgresql://neondb_owner:npg_8XRUb5TyiBZc@ep-spring-poetry-ai4vyvx0-pooler.c-4.us-east-1.aws.neon.tech/knowcamp_db?sslmode=require&channel_binding=require
+      - DATABASE_URL=${DATABASE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - ADMIN_KEY=${ADMIN_KEY}
+      - API_KEY=${API_KEY}
+      - LLAMA_CLOUD_API_KEY=${LLAMA_CLOUD_API_KEY}
     depends_on:
       - db
 
