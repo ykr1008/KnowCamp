@@ -485,15 +485,41 @@ def chat(
         # 2. Search ChromaDB
         vector_db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
         
-        target_subject = str(subject_id) if subject_id else "global"
-        
-        # Build the exact filter ChromaDB demands (Locked to the Tenant)
-        search_filter = {
-            "$and": [
-                {"inst_id": str(user.institution_id)}, # <-- AI CAN ONLY SEE THIS COLLEGE
-                {"subject_id": target_subject}
-            ]
-        }
+        if subject_id:
+            # Classroom search — same as before
+            search_filter = {
+                "$and": [
+                    {"inst_id": str(user.institution_id)},
+                    {"subject_id": str(subject_id)}
+                ]
+            }
+        elif user.role == "admin":
+            # Admin global chat — sees ALL institution docs
+            search_filter = {
+                "inst_id": str(user.institution_id)
+            }
+        else:
+            # Student/Faculty global chat — sees only accessible docs
+            enrollments = db.query(models.Enrollment).filter(
+                models.Enrollment.student_id == user.id
+            ).all()
+            enrolled_subject_ids = [str(e.subject_id) for e in enrollments]
+            
+            taught_subjects = db.query(models.Subject).filter(
+                models.Subject.faculty_id == user.id
+            ).all()
+            taught_ids = [str(s.id) for s in taught_subjects]
+            
+            all_accessible_ids = list(set(
+                ["global"] + enrolled_subject_ids + taught_ids
+            ))
+            
+            search_filter = {
+                "$and": [
+                    {"inst_id": str(user.institution_id)},
+                    {"subject_id": {"$in": all_accessible_ids}}
+                ]
+            }
         
         if filename:
             search_filter["$and"].append({"source": filename})
