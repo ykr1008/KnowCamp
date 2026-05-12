@@ -194,7 +194,7 @@ const ChatComponent = ({ onLogout }) => {
   const fetchSubjects = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('${API}/subjects/', { headers: { Authorization: `Bearer ${token}` } });
+      const response = await axios.get(`${API}/subjects/`, { headers: { Authorization: `Bearer ${token}` } });
       setSubjects(response.data.subjects);
     } catch (error) { console.error("Failed to fetch subjects"); }
   };
@@ -204,7 +204,7 @@ const ChatComponent = ({ onLogout }) => {
     if (!newClassName.trim() || !newClassYear.trim()) return;
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.post('${API}/subjects/', 
+      const response = await axios.post(`${API}/subjects/`, 
         { name: newClassName, year: newClassYear }, { headers: { Authorization: `Bearer ${token}` } }
       );
       alert(`Class created! The invite code is: ${response.data.invite_code}`);
@@ -217,7 +217,7 @@ const ChatComponent = ({ onLogout }) => {
     if (!joinCode.trim()) return;
     try {
       const token = localStorage.getItem('token');
-      await axios.post('${API}/subjects/join/', { invite_code: joinCode }, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.post(`${API}/subjects/join/`, { invite_code: joinCode }, { headers: { Authorization: `Bearer ${token}` } });
       alert("Successfully joined the class!");
       setShowJoinClassModal(false); setJoinCode(""); fetchSubjects();
     } catch (error) { alert(error.response?.data?.detail || "Failed to join class. Check the code."); }
@@ -254,7 +254,7 @@ const ChatComponent = ({ onLogout }) => {
         queryParams.subject_id = currentSubject.id;
       }
 
-      const response = await axios.get('${API}/documents/', {
+      const response = await axios.get(`${API}/documents/`, {
         headers: { 
           Authorization: `Bearer ${token}`,
           'Cache-Control': 'no-cache' // Extra instruction telling browsers not to lie to us
@@ -271,7 +271,7 @@ const ChatComponent = ({ onLogout }) => {
   const fetchChats = async () => {
     try {
       const token = localStorage.getItem('token');
-      let url = '${API}/my_chats/';
+      let url = `${API}/my_chats/`;
       if (currentSubject) url += `?subject_id=${currentSubject.id}`; // Only fetch chats for this room!
 
       const response = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -366,7 +366,7 @@ const ChatComponent = ({ onLogout }) => {
 
     try {
       const token = localStorage.getItem('token');
-      await axios.post('${API}/upload_document/', formData, {
+      await axios.post(`${API}/upload_document/`, formData, {
         headers: { 'Content-Type': 'multipart/form-data', 'Authorization': `Bearer ${token}` },
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -470,7 +470,7 @@ const ChatComponent = ({ onLogout }) => {
   const fetchWhitelist = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('${API}/admin/whitelist/', { headers: { Authorization: `Bearer ${token}` } });
+      const response = await axios.get(`${API}/admin/whitelist/`, { headers: { Authorization: `Bearer ${token}` } });
       setWhitelist(response.data.whitelist || []);
     } catch (error) { console.error("Failed to fetch whitelist"); }
   };
@@ -480,7 +480,7 @@ const ChatComponent = ({ onLogout }) => {
     if (!newEmail.trim()) return;
     try {
       const token = localStorage.getItem('token');
-      await axios.post('${API}/admin/whitelist/', 
+      await axios.post(`${API}/admin/whitelist/`, 
         { email: newEmail, assigned_role: newRole }, 
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -505,7 +505,7 @@ const ChatComponent = ({ onLogout }) => {
   const fetchActiveUsers = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('${API}/admin/users/', { headers: { Authorization: `Bearer ${token}` } });
+      const response = await axios.get(`${API}/admin/users/`, { headers: { Authorization: `Bearer ${token}` } });
       setActiveUsers(response.data.users || []);
     } catch (error) { console.error("Failed to fetch users"); }
   };
