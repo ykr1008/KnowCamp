@@ -6,6 +6,7 @@ const API = import.meta.env.VITE_API_URL;
 
 const ChatComponent = ({ onLogout }) => {
   const [messages, setMessages] = useState([]);
+  const [previewFile, setPreviewFile] = useState(null);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [userRole, setUserRole] = useState(localStorage.getItem('role'));
@@ -93,6 +94,60 @@ const ChatComponent = ({ onLogout }) => {
     } catch (error) { 
       console.error("Failed to fetch students"); 
     }
+  };
+
+
+  const handleFileDownload = async (filename) => {
+    try {
+      const token = localStorage.getItem('token');
+      
+      const response = await axios.get(
+        `${API}/files/${encodeURIComponent(filename)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob'
+        }
+      );
+
+      const contentType = response.headers['content-type'] 
+        || 'application/octet-stream';
+      const blob = new Blob([response.data], { type: contentType });
+      const url = window.URL.createObjectURL(blob);
+      
+      // ← DEFINE FIRST
+      const previewable = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'txt'];
+      const ext = filename.split('.').pop().toLowerCase();
+
+      if (previewable.includes(ext)) {
+        setPreviewFile({ name: filename, url, type: ext });
+      } else {
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => window.URL.revokeObjectURL(url), 5000);
+      }
+
+    } catch (error) {
+      if (error.response?.status === 401) {
+        alert("Session expired. Please log in again.");
+        localStorage.clear();
+        window.location.reload();
+      } else if (error.response?.status === 404) {
+        alert("File not found or you don't have access.");
+      } else {
+        alert("Failed to open file. Please try again.");
+      }
+    }
+  };
+
+  const closePreview = () => {
+    if (previewFile?.url) {
+      window.URL.revokeObjectURL(previewFile.url);
+    }
+    setPreviewFile(null);
   };
 
   // Trigger the backend deletion endpoint we built
@@ -262,7 +317,7 @@ const ChatComponent = ({ onLogout }) => {
         params: queryParams
       });
       
-      setDocuments(response.data.documents);
+      setDocuments(response.data.documents || []);
     } catch (error) { 
       console.error("Failed to fetch docs"); 
     }
@@ -1125,29 +1180,39 @@ const ChatComponent = ({ onLogout }) => {
                                     <span style={{ color: '#5f6368' }}>/</span>
                                     
                                     {/* CLICKABLE LINK (Global View) - NOW USES cleanFileName */}
-                                    <a 
-                                      href={`${API}/files/${cleanFileName}`} 
-                                      target="_blank" 
-                                      rel="noopener noreferrer"
-                                      style={{ color: '#1a0dab', textDecoration: 'none' }}
+                                    <span
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleFileDownload(cleanFileName);
+                                      }}
+                                      style={{ 
+                                        color: '#1a0dab', 
+                                        textDecoration: 'none', 
+                                        cursor: 'pointer' 
+                                      }}
                                       onMouseOver={(e) => e.target.style.textDecoration = 'underline'}
                                       onMouseOut={(e) => e.target.style.textDecoration = 'none'}
                                     >
                                       {cleanFileName}
-                                    </a>
+                                    </span>
                                   </>
                                 ) : (
                                   /* CLICKABLE LINK (Class View / Global Docs) - NOW USES cleanFileName */
-                                  <a 
-                                    href={`${API}/files/${cleanFileName}`} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                    style={{ color: '#1a0dab', textDecoration: 'none' }}
+                                  <span
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleFileDownload(cleanFileName);
+                                    }}
+                                    style={{ 
+                                      color: '#1a0dab', 
+                                      textDecoration: 'none', 
+                                      cursor: 'pointer' 
+                                    }}
                                     onMouseOver={(e) => e.target.style.textDecoration = 'underline'}
                                     onMouseOut={(e) => e.target.style.textDecoration = 'none'}
                                   >
                                     {cleanFileName}
-                                  </a>
+                                  </span>
                                 )}
                               </li>
                             );
@@ -1192,6 +1257,139 @@ const ChatComponent = ({ onLogout }) => {
           </>
         )}
       </div>
+
+      {/* ===== FILE PREVIEW MODAL ===== */}
+      {previewFile && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.75)',
+          zIndex: 2000,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          
+          {/* Header */}
+          <div style={{
+            width: '90%',
+            maxWidth: '900px',
+            backgroundColor: '#1f1f1f',
+            borderRadius: '12px 12px 0 0',
+            padding: '12px 20px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <span style={{ 
+              color: '#ffffff', 
+              fontWeight: 'bold', 
+              fontSize: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              📄 {previewFile.name}
+            </span>
+
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <a
+                href={previewFile.url}
+                download={previewFile.name}
+                style={{
+                  backgroundColor: '#007bff',
+                  color: 'white',
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  fontWeight: 'bold',
+                  textDecoration: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px'
+                }}
+              >
+                ⬇ Download
+              </a>
+
+              <button
+                onClick={closePreview}
+                style={{
+                  backgroundColor: '#ff4d4d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '6px 14px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: 'bold'
+                }}
+              >
+                ✕ Close
+              </button>
+            </div>
+          </div>
+
+          {/* Preview Area */}
+          <div style={{
+            width: '90%',
+            maxWidth: '900px',
+            height: '80vh',
+            backgroundColor: '#ffffff',
+            borderRadius: '0 0 12px 12px',
+            overflow: 'hidden'
+          }}>
+            {previewFile.type === 'pdf' && (
+              <embed
+                src={previewFile.url}
+                type="application/pdf"
+                width="100%"
+                height="100%"
+              />
+            )}
+
+            {['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(previewFile.type) && (
+              <div style={{
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: '#f0f0f0',
+                overflow: 'auto'
+              }}>
+                <img
+                  src={previewFile.url}
+                  alt={previewFile.name}
+                  style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                />
+              </div>
+            )}
+
+            {previewFile.type === 'txt' && (
+              <iframe
+                src={previewFile.url}
+                width="100%"
+                height="100%"
+                style={{ border: 'none', padding: '20px' }}
+                title={previewFile.name}
+              />
+            )}
+          </div>
+
+          {/* Click outside to close */}
+          <div
+            onClick={closePreview}
+            style={{
+              position: 'fixed',
+              top: 0, left: 0, right: 0, bottom: 0,
+              zIndex: -1
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 };

@@ -2,16 +2,13 @@ import os
 import shutil
 import random
 import string
+import mimetypes
 
-from typing import Optional, List
-
-from fastapi.staticfiles import StaticFiles
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, status, Form
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
-from pydantic import BaseModel
 import jwt
 from groq import Groq
 
@@ -61,9 +58,6 @@ UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
     
-# Expose the uploads folder so the React frontend can download/view the files
-# NOTE: Change "uploaded_docs" to whatever your actual folder variable is!
-app.mount("/files", StaticFiles(directory=UPLOAD_DIR), name="files")
 
 # ==========================================
 # PYDANTIC SCHEMAS
@@ -187,7 +181,6 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 # ==========================================
 # DOCUMENT UPLOAD & MANAGEMENT
 # ==========================================
-import io
 
 
 @app.post("/upload_document/")
@@ -225,7 +218,6 @@ async def upload_document(
         f.write(content)
 
     text = ""
-    filename = file.filename.lower()
     
     try:
         # --- THE LLAMAPARSE UPGRADE (Built for Research Papers) ---
@@ -331,8 +323,6 @@ def delete_document(
         vector_db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
         
         # We need to tell Chroma exactly which file to forget.
-        # We use the filename AND the subject_id so it doesn't accidentally delete 
-        # the same file from a different classroom!
         doc_subject_id = str(doc.subject_id) if doc.subject_id else "global"
         
         # Access the raw Chroma collection to delete by metadata
@@ -348,14 +338,27 @@ def delete_document(
         print(f"🚨 Warning: Failed to delete from ChromaDB: {e}")
         # We continue anyway to ensure the SQL database stays clean
 
-    # 3. Delete from PostgreSQL
+    # ---------------------------------------------------------
+    # 3. THE FIX: Physically delete the file from the hard drive
+    # ---------------------------------------------------------
+    file_path = os.path.join(UPLOAD_DIR, doc.filename)
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            print(f"🗑️ Successfully deleted '{doc.filename}' from physical disk.")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not delete physical file '{doc.filename}': {e}")
+    else:
+        print(f"ℹ️ Info: Physical file '{doc.filename}' was already missing from disk.")
+
+    # 4. Delete from PostgreSQL
     db.delete(doc)
     db.commit()
 
-    return {"message": f"Successfully deleted {doc.filename} from database and AI memory."}
+    return {"message": f"Successfully deleted {doc.filename} from database, AI memory, and physical disk."}
 
 # ==========================================
-# CHAT SYSTEM (GEMINI + RAG)
+# CHAT SYSTEM (GROQ + RAG)
 # ==========================================
 @app.get("/my_chats/")
 def get_my_chats(subject_id: Optional[int] = None, token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -611,8 +614,6 @@ def chat(
         # -----------------------------------------------
 
         groq_messages = [{"role": "system", "content": system_prompt}]
-
-        groq_messages = [{"role": "system", "content": system_prompt}]
         for msg in past_messages[-4:]:
             role = "assistant" if msg.role == "ai" else "user"
             groq_messages.append({"role": role, "content": msg.content})
@@ -695,6 +696,63 @@ def add_to_whitelist(request: WhitelistRequest, token: str = Depends(oauth2_sche
     db.add(new_approval)
     db.commit()
     return {"message": f"Added {request.email} as {request.assigned_role}"}
+
+
+from fastapi.responses import FileResponse
+
+@app.get("/files/{filename}")
+async def download_file(
+    filename: str,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
+    # 1. Verify the token
+    try:
+        payload = jwt.decode(
+            token, 
+            security.SECRET_KEY, 
+            algorithms=[security.ALGORITHM]
+        )
+        user = db.query(models.User).filter(
+            models.User.username == payload.get("sub")
+        ).first()
+        
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+            
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # 2. Check the file exists in PostgreSQL for this institution
+    doc = db.query(models.Document).filter(
+        models.Document.filename == filename,
+        models.Document.institution_id == user.institution_id
+    ).first()
+    
+    if not doc:
+        raise HTTPException(
+            status_code=404, 
+            detail="File not found or you don't have access"
+        )
+
+    # 3. Check file exists on disk
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=404, 
+            detail="File not found on server"
+        )
+
+    # 4. Detect content type and serve
+    content_type, _ = mimetypes.guess_type(filename)
+    if not content_type:
+        content_type = 'application/octet-stream'
+
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type=content_type
+    )
 
 @app.get("/admin/whitelist/")
 def get_whitelist(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
