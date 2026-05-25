@@ -4,11 +4,14 @@ import random
 import string
 import mimetypes
 
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, status, Form
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, status, Form, Request
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import jwt
 from groq import Groq
 
@@ -34,6 +37,10 @@ load_dotenv()
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="KnowCamp API", version="2.0.0")
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 ADMIN_KEY = os.getenv("ADMIN_KEY")
 API_KEY = os.getenv("API_KEY")
@@ -184,7 +191,9 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 
 @app.post("/upload_document/")
+@limiter.limit("10/minute")
 async def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     subject_id: Optional[int] = Form(None), 
     token: str = Depends(oauth2_scheme), 
@@ -447,7 +456,9 @@ def rename_chat_session(
         raise HTTPException(status_code=500, detail="Could not rename chat")
 
 @app.get("/chat/")
+@limiter.limit("20/minute")
 def chat(
+    request: Request,
     question: str, 
     ai_mode: bool = False,
     session_id: Optional[int] = None, 
