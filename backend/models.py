@@ -98,6 +98,7 @@ class Document(Base):
     uploaded_by = Column(String)
     upload_date = Column(DateTime, default=datetime.datetime.utcnow)
     category = Column(String) # 'general' (Admin Circulars) OR 'subject_notes' (Faculty)
+    cloudinary_url = Column(String, nullable=True)
     
     institution_id = Column(Integer, ForeignKey("institutions.id")) # <-- SAAS UPGRADE
     institution = relationship("Institution", back_populates="documents")

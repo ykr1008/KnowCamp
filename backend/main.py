@@ -3,6 +3,9 @@ import shutil
 import random
 import string
 import mimetypes
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, status, Form, Request
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
@@ -45,9 +48,18 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 ADMIN_KEY = os.getenv("ADMIN_KEY")
 API_KEY = os.getenv("API_KEY")
 
+
+# Configure Cloudinary
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+    secure=True
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173","https://cheerful-harmony-production.up.railway.app"], 
+    allow_origins=["http://localhost:5173","https://knowcamp.up.railway.app"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -205,57 +217,66 @@ async def upload_document(
     if user.role not in ["admin", "faculty"]:
         raise HTTPException(status_code=403, detail="Not authorized to upload.")
 
-    # --- FIX 1: GRACEFUL DUPLICATE CHECK ---
+    # --- GRACEFUL DUPLICATE CHECK ---
     existing_doc = db.query(models.Document).filter(models.Document.filename == file.filename, models.Document.institution_id == user.institution_id).first()
     if existing_doc:
         raise HTTPException(status_code=400, detail=f"The file '{file.filename}' already exists! Please rename your file and try again.")
 
-    # 1. Save to PostgreSQL
-    new_doc = models.Document(
-        filename=file.filename, 
-        uploaded_by=user.username,
-        subject_id=subject_id,
-        institution_id=user.institution_id # <-- LOCKED TO TENANT
-    )
-    db.add(new_doc)
-    db.commit()
-
-    # 2. Read the file content safely and save it
+    # 1. Read file content and save temporarily to disk for Cloudinary/LlamaParse
     content = await file.read()
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as f:
         f.write(content)
 
-    text = ""
-    
+    # 2. Upload to Cloudinary FIRST so we have the URL
+    cloudinary_url = None
     try:
-        # --- THE LLAMAPARSE UPGRADE (Built for Research Papers) ---
+        cloudinary_response = cloudinary.uploader.upload(
+            file_path,
+            resource_type="raw",        # raw = non-image files (PDF, DOCX etc)
+            public_id=f"knowcamp/{user.institution_id}/{file.filename}",
+            overwrite=True,
+            use_filename=True,
+            unique_filename=False
+        )
+        cloudinary_url = cloudinary_response["secure_url"]
+        print(f"✅ Uploaded to Cloudinary: {cloudinary_url}")
+    except Exception as e:
+        print(f"⚠️ Cloudinary upload failed: {e}")
+
+    # 3. Save to PostgreSQL NOW that we have the URL
+    new_doc = models.Document(
+        filename=file.filename, 
+        uploaded_by=user.username,
+        subject_id=subject_id,
+        institution_id=user.institution_id, # <-- LOCKED TO TENANT
+        cloudinary_url=cloudinary_url       # <-- THIS NOW EXISTS!
+    )
+    db.add(new_doc)
+    db.commit()
+
+    text = ""
+    try:
+        # --- THE LLAMAPARSE UPGRADE ---
         print(f"Deploying LlamaParse Vision AI on {file.filename}...")
-        
         from llama_parse import LlamaParse
         
-        # Initialize the advanced layout-aware parser
         parser = LlamaParse(
             api_key=os.getenv("LLAMA_CLOUD_API_KEY"), 
-            result_type="markdown", # This forces it to format tables and headers perfectly!
+            result_type="markdown", 
             verbose=True,
             language="en"
         )
         
-        # Parse the saved file directly
         parsed_docs = parser.load_data(file_path)
-        
-        # Combine the parsed pages into one beautifully formatted Markdown string
         text = "\n\n".join([doc.text for doc in parsed_docs])
-        
         print(f"Successfully extracted {file.filename} with layout preserved!")
             
     except Exception as e:
-        db.delete(new_doc) # Rollback the database if reading fails
+        db.delete(new_doc) 
         db.commit()
         raise HTTPException(status_code=400, detail=f"Failed to parse document: {str(e)}")
 
-    # 3. Split and tag the text
     print("\n" + "="*50)
     print("DEBUG: THIS IS WHAT THE AI SEES:")
     print(text)
@@ -275,11 +296,10 @@ async def upload_document(
         {
             "source": file.filename, 
             "subject_id": metadata_tag,
-            "inst_id": str(user.institution_id) # <-- CRITICAL ISOLATION TAG
+            "inst_id": str(user.institution_id) 
         } for _ in chunks
     ]
     
-    # 4. Save to Vector Database
     from processor import CHROMA_PATH, embeddings
     from langchain_community.vectorstores import Chroma
     vector_db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
@@ -347,8 +367,20 @@ def delete_document(
         print(f"🚨 Warning: Failed to delete from ChromaDB: {e}")
         # We continue anyway to ensure the SQL database stays clean
 
+    # 3. Delete from Cloudinary  ← ADD HERE
+    if doc.cloudinary_url:
+        try:
+            public_id = f"knowcamp/{doc.institution_id}/{doc.filename}"
+            cloudinary.api.delete_resources(
+                [public_id],
+                resource_type="raw"
+            )
+            print(f"✅ Deleted from Cloudinary: {public_id}")
+        except Exception as e:
+            print(f"⚠️ Cloudinary delete failed: {e}")
+
     # ---------------------------------------------------------
-    # 3. THE FIX: Physically delete the file from the hard drive
+    # 4. THE FIX: Physically delete the file from the hard drive
     # ---------------------------------------------------------
     file_path = os.path.join(UPLOAD_DIR, doc.filename)
     if os.path.exists(file_path):
@@ -717,53 +749,53 @@ async def download_file(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ):
-    # 1. Verify the token
+    # 1. Verify token
     try:
         payload = jwt.decode(
-            token, 
-            security.SECRET_KEY, 
+            token,
+            security.SECRET_KEY,
             algorithms=[security.ALGORITHM]
         )
         user = db.query(models.User).filter(
             models.User.username == payload.get("sub")
         ).first()
-        
+
         if not user:
             raise HTTPException(status_code=401, detail="Invalid token")
-            
+
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    # 2. Check the file exists in PostgreSQL for this institution
+    # 2. Check file exists in PostgreSQL for this institution
     doc = db.query(models.Document).filter(
         models.Document.filename == filename,
         models.Document.institution_id == user.institution_id
     ).first()
-    
+
     if not doc:
         raise HTTPException(
-            status_code=404, 
+            status_code=404,
             detail="File not found or you don't have access"
         )
 
-    # 3. Check file exists on disk
+    # 3. If Cloudinary URL exists — redirect to it
+    if doc.cloudinary_url:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=doc.cloudinary_url)
+
+    # 4. Fallback — try local disk
     file_path = os.path.join(UPLOAD_DIR, filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(
-            status_code=404, 
-            detail="File not found on server"
+    if os.path.exists(file_path):
+        content_type, _ = mimetypes.guess_type(filename)
+        if not content_type:
+            content_type = 'application/octet-stream'
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type=content_type
         )
 
-    # 4. Detect content type and serve
-    content_type, _ = mimetypes.guess_type(filename)
-    if not content_type:
-        content_type = 'application/octet-stream'
-
-    return FileResponse(
-        path=file_path,
-        filename=filename,
-        media_type=content_type
-    )
+    raise HTTPException(status_code=404, detail="File not found on server")
 
 @app.get("/admin/whitelist/")
 def get_whitelist(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
