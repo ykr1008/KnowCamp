@@ -15,6 +15,8 @@ from sqlalchemy import desc
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from langchain_pinecone import PineconeVectorStore
+from pinecone import Pinecone
 import jwt
 from groq import Groq
 
@@ -300,9 +302,9 @@ async def upload_document(
         } for _ in chunks
     ]
     
-    from processor import CHROMA_PATH, embeddings
-    from langchain_community.vectorstores import Chroma
-    vector_db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
+    from processor import embeddings, pinecone_index
+    from langchain_pinecone import PineconeVectorStore
+    vector_db = PineconeVectorStore(index=pinecone_index, embedding=embeddings)
     vector_db.add_texts(texts=chunks, metadatas=metadatas)
     
     return {"message": f"Successfully uploaded {file.filename}"}
@@ -349,18 +351,15 @@ def delete_document(
 
     # 2. Delete the memories from ChromaDB FIRST!
     try:
-        vector_db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
+        from processor import pinecone_index
         
-        # We need to tell Chroma exactly which file to forget.
+        # We need to tell Pinecone exactly which file to forget.
         doc_subject_id = str(doc.subject_id) if doc.subject_id else "global"
         
-        # Access the raw Chroma collection to delete by metadata
-        vector_db._collection.delete(
-            where={
-                "$and": [
-                    {"source": doc.filename},
-                    {"subject_id": doc_subject_id}
-                ]
+        pinecone_index.delete(
+            filter={
+                "source": doc.filename,
+                "subject_id": doc_subject_id
             }
         )
     except Exception as e:
@@ -528,24 +527,21 @@ def chat(
             if last_user_messages:
                 search_query = f"{last_user_messages[-1]} {question}"
 
-        # 2. Search ChromaDB
-        vector_db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
+        # 2. Search pinecone for relevant documents based on the question + context
+        from processor import embeddings, pinecone_index
+        from langchain_pinecone import PineconeVectorStore
+        vector_db = PineconeVectorStore(index=pinecone_index, embedding=embeddings)
         
         if subject_id:
-            # Classroom search — same as before
             search_filter = {
-                "$and": [
-                    {"inst_id": str(user.institution_id)},
-                    {"subject_id": str(subject_id)}
-                ]
+                "inst_id": str(user.institution_id),
+                "subject_id": str(subject_id)
             }
         elif user.role == "admin":
-            # Admin global chat — sees ALL institution docs
             search_filter = {
                 "inst_id": str(user.institution_id)
             }
         else:
-            # Student/Faculty global chat — sees only accessible docs
             enrollments = db.query(models.Enrollment).filter(
                 models.Enrollment.student_id == user.id
             ).all()
@@ -561,14 +557,12 @@ def chat(
             ))
             
             search_filter = {
-                "$and": [
-                    {"inst_id": str(user.institution_id)},
-                    {"subject_id": {"$in": all_accessible_ids}}
-                ]
+                "inst_id": str(user.institution_id),
+                "subject_id": {"$in": all_accessible_ids}
             }
-        
+
         if filename:
-            search_filter["$and"].append({"source": filename})
+            search_filter["source"] = filename
 
         # Search the database securely
         # FIX 1: Don't grab 15 chunks! 5 is the sweet spot for accurate RAG.
@@ -580,10 +574,8 @@ def chat(
             print(f"DEBUG - File: {os.path.basename(doc.metadata.get('source', 'Unknown'))}, Score: {score}") 
             
             # FIX 2: The Relevance Bouncer
-            # Note: ChromaDB typically uses L2 distance by default (Lower Score = Better Match).
-            # A score of 0.3 is a perfect match. A score of 1.5+ is usually garbage.
-            # We will only keep documents that score under 1.2.
-            if score < 1.5: 
+            
+            if score > 0.3: 
                 docs.append(doc)
             else:
                 print(f"DEBUG - 🛑 BLOCKED {os.path.basename(doc.metadata.get('source', 'Unknown'))} (Score too bad: {score})")
@@ -1159,9 +1151,8 @@ def delete_subject(
     try:
         from processor import CHROMA_PATH, embeddings
         from langchain_community.vectorstores import Chroma
-        vector_db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
-        # Delete all document chunks tagged with this specific subject_id
-        vector_db._collection.delete(where={"subject_id": str(subject_id)})
+        from processor import pinecone_index
+        pinecone_index.delete(filter={"subject_id": str(subject_id)})
     except Exception as e:
         print(f"Warning: Failed to clean ChromaDB vectors: {e}")
 

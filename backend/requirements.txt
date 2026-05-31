@@ -13,6 +13,8 @@ bcrypt==4.0.1
 pydantic>=2.8.0
 slowapi
 cloudinary
+pinecone-client
+langchain-pinecone
 
 # --- AI & LangChain ---
 groq
