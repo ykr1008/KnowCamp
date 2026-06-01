@@ -12,6 +12,7 @@ from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+from sqlalchemy import text as models_text
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -58,6 +59,43 @@ cloudinary.config(
     api_secret=os.getenv("CLOUDINARY_API_SECRET"),
     secure=True
 )
+
+
+# ==========================================
+# STARTUP INTEGRITY CHECK
+# ==========================================
+@app.on_event("startup")
+async def startup_integrity_check():
+    print("\n" + "="*50, flush=True)
+    print("🔍 STARTUP INTEGRITY CHECK")
+    print("="*50, flush=True)
+    
+    # 1. Check PostgreSQL
+    try:
+        from database import engine
+        with engine.connect() as conn:
+            conn.execute(models_text("SELECT 1"))
+        print("✅ PostgreSQL: Connected", flush=True)
+    except Exception as e:
+        print(f"🚨 PostgreSQL: FAILED — {e}", flush=True)
+
+    # 2. Check Pinecone
+    try:
+        from processor import pinecone_index
+        stats = pinecone_index.describe_index_stats()
+        print(f"✅ Pinecone: Connected — {stats.total_vector_count} vectors stored", flush=True)
+    except Exception as e:
+        print(f"🚨 Pinecone: FAILED — {e}", flush=True)
+
+    # 3. Check Cloudinary
+    try:
+        cloudinary.api.ping()
+        print("✅ Cloudinary: Connected", flush=True)
+    except Exception as e:
+        print(f"🚨 Cloudinary: FAILED — {e}", flush=True)
+
+    print("="*50 + "\n", flush=True)
+
 
 app.add_middleware(
     CORSMiddleware,
