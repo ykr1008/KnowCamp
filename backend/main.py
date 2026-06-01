@@ -570,12 +570,12 @@ def chat(
 
         # Quality Control Filter
         docs = []
+        scores = [score for _, score in raw_results]
+        best_score = max(scores) if scores else 0
+
         for doc, score in raw_results:
-            print(f"DEBUG - File: {os.path.basename(doc.metadata.get('source', 'Unknown'))}, Score: {score}") 
-            
-            # FIX 2: The Relevance Bouncer
-            
-            if score > 0.3: 
+            print(f"DEBUG - File: {os.path.basename(doc.metadata.get('source', 'Unknown'))}, Score: {score}")
+            if best_score > 0.05 and score >= (best_score * 0.5):
                 docs.append(doc)
             else:
                 print(f"DEBUG - 🛑 BLOCKED {os.path.basename(doc.metadata.get('source', 'Unknown'))} (Score too bad: {score})")
