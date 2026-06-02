@@ -669,7 +669,7 @@ def chat(
                 f"You are KnowCamp AI, a world-class premium academic and professional advisor. {personality_rules}\n"
                 "MODE: GENERAL AI (You may use Context + Your General Knowledge).\n\n"
                 f"Context:\n{context}\n\n"
-                "CITATION: End with 'SOURCES: filename.ext' or 'SOURCES: General World Knowledge'."
+                "CITATION: End with 'SOURCES: filename.ext' or 'SOURCES: General World Knowledge'. List ONLY files you directly quoted or paraphrased. Do NOT list files you retrieved but didn't use."
             )
         else:
             system_prompt = (
@@ -682,7 +682,8 @@ def chat(
                 "2. You MUST check the text between the BEGIN and END tags above. If the exact answer is not there, you do not know it.\n"
                 "3. If the user asks for a comparison involving companies, policies, or facts NOT explicitly written in the Context above, you MUST refuse to answer.\n"
                 "4. Do NOT invent generic comparisons. Do NOT try to be helpful with outside knowledge.\n"
-                "5. If the answer requires outside knowledge, you MUST begin your response with the exact token: [NO_RELEVANT_DATA]. After that token, you may politely explain that you cannot answer the question.'\n"
+                "5. If the answer requires outside knowledge, you MUST begin your response with the exact token: [NO_RELEVANT_DATA]. After that token, you may politely explain that you cannot answer the question.\n"
+                "6. CITATION RULE: End with 'SOURCES: filename.ext'. List ONLY the specific files you directly quoted or paraphrased. Do NOT list files you merely retrieved but didn't use.\n"
             )
         # -----------------------------------------------
 
@@ -708,18 +709,22 @@ def chat(
                 final_answer = raw_answer.replace("[NO_RELEVANT_DATA]", "").strip()
                 sources_list = [] # Wipe the sources!
             elif "SOURCES:" in raw_answer:
-                # Split the text to remove the ugly 'SOURCES:' line from the UI
                 parts = raw_answer.split("SOURCES:")
-                final_answer = parts[0].strip() # The clean chat answer
-                llm_cited_files = parts[1].strip() # The raw string of filenames
+                final_answer = parts[0].strip()
+                llm_cited_files = parts[1].strip()
                 
-                # Filter the massive 'sources_list' to ONLY include what Groq actually used
+                # Only keep sources that were ACTUALLY cited
                 smart_sources = []
                 for src in sources_list:
-                    if src["filename"] in llm_cited_files:
+                    # Check exact filename match, not partial
+                    if src["filename"].lower() in llm_cited_files.lower():
                         smart_sources.append(src)
                 
-                sources_list = smart_sources
+                # If LLM cited "General World Knowledge", wipe all doc sources
+                if "general world knowledge" in llm_cited_files.lower():
+                    smart_sources = []
+                
+                sources_list = smart_sources if smart_sources else []
             # -------------------------------------------------
                 
         except Exception as ai_err:
