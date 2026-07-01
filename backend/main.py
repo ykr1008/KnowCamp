@@ -613,7 +613,7 @@ def chat(
 
         for doc, score in raw_results:
             print(f"DEBUG - File: {os.path.basename(doc.metadata.get('source', 'Unknown'))}, Score: {score}")
-            if best_score > 0.05 and score >= (best_score * 0.5):
+            if best_score > 0.15 and score >= (best_score * 0.5):
                 docs.append(doc)
             else:
                 print(f"DEBUG - 🛑 BLOCKED {os.path.basename(doc.metadata.get('source', 'Unknown'))} (Score too bad: {score})")
@@ -682,8 +682,9 @@ def chat(
                 "2. You MUST check the text between the BEGIN and END tags above. If the exact answer is not there, you do not know it.\n"
                 "3. If the user asks for a comparison involving companies, policies, or facts NOT explicitly written in the Context above, you MUST refuse to answer.\n"
                 "4. Do NOT invent generic comparisons. Do NOT try to be helpful with outside knowledge.\n"
-                "5. If the answer requires outside knowledge, you MUST begin your response with the exact token: [NO_RELEVANT_DATA]. After that token, you may politely explain that you cannot answer the question.\n"
-                "6. CITATION RULE: End with 'SOURCES: filename.ext'. List ONLY the specific files you directly quoted or paraphrased. Do NOT list files you merely retrieved but didn't use.\n"
+                "5. If the EXACT answer is not explicitly written word-for-word in the context above, you MUST begin with [NO_RELEVANT_DATA]. No exceptions.\n"
+                "6. If the user asks about a topic and the context only mentions it incidentally (e.g. a filename or passing reference), that does NOT count as relevant. Respond with [NO_RELEVANT_DATA].\n"
+                "7. CITATION RULE: End with 'SOURCES: filename.ext'. List ONLY the specific files you directly quoted or paraphrased. Do NOT list files you merely retrieved but didn't use.\n"
             )
         # -----------------------------------------------
 
@@ -709,14 +710,14 @@ def chat(
                 final_answer = raw_answer.replace("[NO_RELEVANT_DATA]", "").strip()
                 sources_list = [] # Wipe the sources!
             elif "SOURCES:" in raw_answer:
-                parts = raw_answer.split("SOURCES:")
-                final_answer = parts[0].strip()
-                llm_cited_files = parts[1].strip()
+                # Find the LAST occurrence of SOURCES: in case AI puts it mid-response
+                last_sources_idx = raw_answer.rfind("SOURCES:")
+                final_answer = raw_answer[:last_sources_idx].strip()
+                llm_cited_files = raw_answer[last_sources_idx + 8:].strip()
                 
                 # Only keep sources that were ACTUALLY cited
                 smart_sources = []
                 for src in sources_list:
-                    # Check exact filename match, not partial
                     if src["filename"].lower() in llm_cited_files.lower():
                         smart_sources.append(src)
                 
@@ -778,7 +779,35 @@ def add_to_whitelist(request: WhitelistRequest, token: str = Depends(oauth2_sche
 
 from fastapi.responses import FileResponse
 
-@app.get("/files/{filename}")
+@app.get("/files/{filename:path}/url")
+async def get_file_url(
+    filename: str,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
+    import httpx
+    try:
+        payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
+        user = db.query(models.User).filter(models.User.username == payload.get("sub")).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    doc = db.query(models.Document).filter(
+        models.Document.filename == filename,
+        models.Document.institution_id == user.institution_id
+    ).first()
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if doc.cloudinary_url:
+        return {"url": doc.cloudinary_url}
+
+    raise HTTPException(status_code=404, detail="File not found")
+
+@app.get("/files/{filename:path}")
 async def download_file(
     filename: str,
     token: str = Depends(oauth2_scheme),
@@ -831,6 +860,7 @@ async def download_file(
         )
 
     raise HTTPException(status_code=404, detail="File not found on server")
+
 
 @app.get("/admin/whitelist/")
 def get_whitelist(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):

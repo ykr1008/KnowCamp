@@ -100,43 +100,37 @@ const ChatComponent = ({ onLogout }) => {
   const handleFileDownload = async (filename) => {
     try {
       const token = localStorage.getItem('token');
-      
-      const response = await axios.get(
-        `${API}/files/${encodeURIComponent(filename)}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          responseType: 'blob'
-        }
+      const urlResponse = await axios.get(
+        `${API}/files/${encodeURIComponent(filename)}/url`,
+        { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      const contentType = response.headers['content-type'] 
-        || 'application/octet-stream';
-      const blob = new Blob([response.data], { type: contentType });
-      const url = window.URL.createObjectURL(blob);
-      
-      // ← DEFINE FIRST
+      const fileUrl = urlResponse.data.url;
+
+      const fileResponse = await axios.get(fileUrl, { responseType: 'blob' });
+      const contentType = fileResponse.headers['content-type'] || 'application/octet-stream';
+      const blob = new Blob([fileResponse.data], { type: contentType });
+      const localUrl = window.URL.createObjectURL(blob);
+
       const previewable = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'txt'];
       const ext = filename.split('.').pop().toLowerCase();
 
       if (previewable.includes(ext)) {
-        setPreviewFile({ name: filename, url, type: ext });
+        setPreviewFile({ name: filename, url: localUrl, type: ext });
       } else {
         const link = document.createElement('a');
-        link.href = url;
+        link.href = localUrl;
         link.setAttribute('download', filename);
         document.body.appendChild(link);
         link.click();
         link.remove();
-        setTimeout(() => window.URL.revokeObjectURL(url), 5000);
+        setTimeout(() => window.URL.revokeObjectURL(localUrl), 5000);
       }
-
     } catch (error) {
       if (error.response?.status === 401) {
         alert("Session expired. Please log in again.");
         localStorage.clear();
         window.location.reload();
-      } else if (error.response?.status === 404) {
-        alert("File not found or you don't have access.");
       } else {
         alert("Failed to open file. Please try again.");
       }

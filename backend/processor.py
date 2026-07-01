@@ -6,7 +6,7 @@ from pinecone import Pinecone
 load_dotenv()
 
 # Embeddings model (same as before)
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # Pinecone client
 pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
