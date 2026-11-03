@@ -110,7 +110,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 model = Groq(api_key=API_KEY)
 
 # We define the specific model name as a string to use in the chat function
-AI_ENGINE = "llama-3.3-70b-versatile"
+AI_ENGINE = "openai/gpt-oss-120b"
 
 
 UPLOAD_DIR = "uploads"
@@ -618,6 +618,9 @@ def chat(
             else:
                 print(f"DEBUG - 🛑 BLOCKED {os.path.basename(doc.metadata.get('source', 'Unknown'))} (Score too bad: {score})")
 
+        for d in docs:
+            print(f"DEBUG - CHUNK: {d.page_content[:150]!r}", flush=True)
+            
         # If database is empty or nothing passes
         if not docs:
             fallback_answer = "I couldn't find any relevant information in the uploaded documents."
@@ -685,6 +688,7 @@ def chat(
                 "5. If the EXACT answer is not explicitly written word-for-word in the context above, you MUST begin with [NO_RELEVANT_DATA]. No exceptions.\n"
                 "6. If the user asks about a topic and the context only mentions it incidentally (e.g. a filename or passing reference), that does NOT count as relevant. Respond with [NO_RELEVANT_DATA].\n"
                 "7. CITATION RULE: End with 'SOURCES: filename.ext'. List ONLY the specific files you directly quoted or paraphrased. Do NOT list files you merely retrieved but didn't use.\n"
+                "8. ALWAYS write the full answer first. The SOURCES line must come after the answer and can never be the only thing in your response. If you cannot answer, start with [NO_RELEVANT_DATA] and explain why.\n"
             )
         # -----------------------------------------------
 
@@ -697,10 +701,11 @@ def chat(
 
         try:
             response = model.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="openai/gpt-oss-120b",
                 messages=groq_messages, 
             )
             raw_answer = response.choices[0].message.content
+            print(f"DEBUG - RAW ANSWER: {repr(raw_answer)}", flush=True)
             
             # --- SMART RAG UPGRADE 3: Intercept and Filter ---
             final_answer = raw_answer
@@ -726,6 +731,10 @@ def chat(
                     smart_sources = []
                 
                 sources_list = smart_sources if smart_sources else []
+                
+            if not final_answer.strip():
+                final_answer = "I couldn't find that information in the uploaded documents."
+                sources_list = []
             # -------------------------------------------------
                 
         except Exception as ai_err:
